@@ -301,8 +301,9 @@ jobs:
             fi
 
             actual_certificate_digest="$(
-              awk -F': ' '/certificate SHA-256 digest:/{print $2; exit}' \
+              sed -nE 's/^[[:space:]]*Signer #[0-9]+ certificate SHA-256 digest:[[:space:]]*//p' \
                 "$verifier_output" |
+                awk 'NF {print; exit}' |
                 tr -d '[:space:]:' |
                 tr '[:upper:]' '[:lower:]'
             )"
@@ -348,7 +349,10 @@ jobs:
 
             actual_aab_certificate_digest="$(
               keytool -printcert -jarfile "$destination" 2>/dev/null |
-              awk -F': ' '/SHA256:/{gsub(/:/, "", $2); gsub(/[[:space:]]/, "", $2); print tolower($2); exit}'
+              sed -nE 's/^[[:space:]]*SHA256:[[:space:]]*//p' |
+              awk 'NF {print; exit}' |
+              tr -d '[:space:]:' |
+              tr '[:upper:]' '[:lower:]'
             )"
             if [[ "$actual_aab_certificate_digest" != "$expected_certificate_digest" ]]; then
               echo "Signed release AAB certificate does not match the configured signing alias: $artifact_name" >&2
