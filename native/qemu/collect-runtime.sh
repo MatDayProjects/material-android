@@ -131,7 +131,7 @@ while ((${#queue[@]})); do
     [[ -n "$dependency" ]] || continue
     if [[ -e "$prefix/lib/$dependency" || -L "$prefix/lib/$dependency" ]]; then
       copy_library "$dependency" || exit 1
-    elif [[ "$dependency" == "libc.so" || "$dependency" == "libm.so" || "$dependency" == "libdl.so" || "$dependency" == "liblog.so" || "$dependency" == "libandroid.so" ]]; then
+    elif [[ "$dependency" == "libc.so" || "$dependency" == "libm.so" || "$dependency" == "libdl.so" || "$dependency" == "liblog.so" || "$dependency" == "libandroid.so" || "$dependency" == "libOpenSLES.so" ]]; then
       : # Provided by Android's linker namespace on the target device.
     else
       echo "Required runtime library is absent from the Termux prefix: $dependency" >&2
