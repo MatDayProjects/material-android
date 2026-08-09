@@ -6,14 +6,17 @@ deliberately hand-written so a new job cannot quietly appear without a bootstrap
 | Job | Runner | Dependencies bootstrapped by the job | Cache or external input | Safe evidence |
 | --- | --- | --- | --- | --- |
 | `build-runtime` | `ubuntu-24.04` | `bash`, `curl`, Git, Docker, `jq`, GNU `binutils/readelf`, `sha256sum`; immutable-digest Termux package-builder image; pinned QEMU archive; pinned Termux package tree | GitHub Actions runner tool cache plus Docker image cache; QEMU source URL, Termux Git revision, patch set, and builder image digest are pinned in `native/qemu/qemu-build.json` | Runtime files, runtime manifest, builder/recipe/patch provenance, Gradle-independent logs |
-| `package-and-smoke-test` | `ubuntu-24.04` | Temurin JDK 17, Gradle wrapper, Android SDK platform 35, build-tools 35.0.0 with `zipalign` explicitly added to `PATH`, platform-tools, API 35 default x86_64 emulator launched with `-no-accel`, 4096 MiB, and 4 cores for hosts without `/dev/kvm` | Native runtime artifacts from the two successful `build-runtime` matrix jobs | APK, versioned dependency assets, test XML/HTML, runtime manifests, emulator logcat/memory/properties, instrumentation result |
+| `package-and-smoke-test` | `ubuntu-24.04` | Python 3, Temurin JDK 17, Gradle wrapper, Android SDK platform 35, and build-tools 35.0.0 with `aapt2`, `zipalign`, and `apksigner` explicitly added to `PATH` | Native runtime artifacts from the two successful `build-runtime` matrix jobs | Post-verification staged unsigned app/instrumentation APKs, CI context, versioned dependency assets, unit-test XML/HTML, runtime manifests, and `instrumentation-skip.txt` |
 
 The workflow fails before the real build when a required command, source digest,
-Termux revision, patch count, runtime binary, versioned library asset, APK member, or
-emulator smoke signal is missing. The headless instrumentation step selects the native
-runtime and asset-store classes explicitly, avoiding a false dependency on a focused UI
-root. Artifact collection is `always()` and `continue-on-error` so diagnostic evidence
-does not overwrite the original failure.
+Termux revision, patch count, runtime binary, versioned library asset, APK member,
+alignment check, or unsigned-APK check is missing. The app and instrumentation APKs are
+built in disposable home directories and inspected by the committed signing-block
+verifier. Rejected packages remain outside the upload staging directory, while every
+artifact-producing job records run, commit, status, and runner context. Live instrumentation is not part of
+the active workflow because Android refuses unsigned APK installation and the project
+does not create or use a signing identity. Artifact collection is `always()` and
+`continue-on-error` so diagnostic evidence does not overwrite the original failure.
 
 The builder image is the public image maintained by Termux and is consumed only through
 the immutable digest in `qemu-build.json`; the build fails if Docker reports a different

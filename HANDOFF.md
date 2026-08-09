@@ -1,5 +1,52 @@
 # Handoff
 
+## 2026-08-09 · Explicit unsigned debug enforcement
+
+### Current state
+
+- Final artifact inspection found that the Android Gradle Plugin's default debug
+  configuration had signed `app-debug.apk` with an auto-generated `Android Debug`
+  certificate. That artifact and the earlier debug-signed instrumentation runs are
+  historical diagnostics; they do not satisfy the repository's no-signing contract.
+- Both `debug` and `release` now set `signingConfig = null`. Android CI, the native QEMU
+  package lane, and the release lane build the debug app, instrumentation, and release
+  packages in disposable home directories. The committed verifier rejects v1/JAR
+  metadata, APK Signing Blocks in APK and AAB containers, detached v4 `.idsig` files,
+  malformed archives, generated signing material, and symbolic-link escapes before
+  `aapt2`, `zipalign`, `apksigner`, `jarsigner`, or pinned `bundletool` add independent
+  checks. Workflows copy packages into upload staging only after every check passes.
+- The native lane no longer attempts installation or instrumentation. Stock Android
+  refuses unsigned APK installation, and the project does not create or use the signing
+  identity that installation would require. `instrumentation-skip.txt` records this
+  boundary alongside the static package and unit-test evidence.
+- Android guest kernel/initrd/raw-image boot, display readiness, serial console, and
+  host-to-guest file transfer remain unverified.
+
+### Verification in this lane
+
+- The superseded default-branch APK from run `31319585312` has SHA-256
+  `43b7f8d6639e1af51fee91a3d6621b633dcd3592704a9eefaaffeee4371a13e1` and
+  `apksigner verify --print-certs` reports one `CN=Android Debug` signer. This is the
+  concrete evidence that triggered the correction; it is not an approved release
+  artifact.
+- A fresh-home local `assembleDebugAndroidTest` completed successfully. The debug app,
+  instrumentation APK, release APK, and release AAB all passed the committed unsigned
+  verifier; 17 security regression tests passed (10 artifact-parser tests and 7 workflow
+  contract tests), including APK/AAB Signing Blocks, symlink escapes, staging coverage,
+  and signing-command detection; pinned bundletool 1.18.3 validated the real release AAB; and the
+  verifier rejected the superseded debug-signed APK above.
+- Two independent read-only reviews found and prompted fixes for AAB Signing Block
+  coverage, signed failure-artifact uploads, symlink escapes, exact instrumentation APK
+  discovery, AAB semantic validation, locale-stable verifier output, and per-job context
+  manifests. The review note that the new scripts were not yet tracked is resolved by
+  including them in the correction commit rather than staging only pre-existing files.
+- Repository-level GitHub Actions secrets are empty, and there is no `signing`
+  environment. The authenticated account cannot inspect the existing `android-release`
+  environment's secret-name inventory (`HTTP 403: Must have admin rights to Repository`),
+  so that names-only external-state audit remains unverified. No workflow references an
+  environment secret or invokes a signing operation.
+- Hosted replacement-run evidence is recorded after the corrected workflows complete.
+
 ## 2026-08-09 · Bounded hosted emulator validation
 
 ### Current state
@@ -145,7 +192,9 @@ The host toolchain was installed in an isolated user-scoped directory outside th
   4 instrumentation tests passed after the final build; the editor controls were
   captured at the initial and scrolled positions.
 - `actionlint -shellcheck=` — passed structural workflow validation. The host does not have `shellcheck`, so the run-block shell content was not covered by that local actionlint invocation; hosted CI remains the shell verification gate.
-- `apksigner verify --verbose --print-certs` — passed for the debug APK.
+- `apksigner verify --verbose --print-certs` — historically reported an `Android Debug`
+  signer for the debug APK. That implicit signing path is superseded by the explicit
+  unsigned-build correction above.
 
 ## Artifact policy
 

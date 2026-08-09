@@ -36,17 +36,14 @@ APK honest and keeps the native capability visible in the backend readiness stat
 Run the workflow `.github/workflows/android-native-qemu.yml` on a push or with
 `workflow_dispatch`. The runtime build matrix creates one host-ABI output for
 `arm64-v8a` and one for `x86_64`; the packaging job combines both and builds the debug
-APK. When `/dev/kvm` is readable, the job also runs instrumentation on an API 35
-x86_64 emulator and preserves emulator logcat, package memory, and device-property
-evidence before teardown. GitHub-hosted Linux machines commonly lack usable KVM
-permissions; on those runners the workflow records `emulator-skip.txt` and finishes
-the static package/unit-test gate instead of pretending that a software-only emulator
-has provided live instrumentation evidence. The lifecycle still bounds every ADB
-readiness call and force-kills an overlong Gradle/emulator process when the live lane
-is available.
-The application bootstrap keeps QEMU controller construction deferred until the Activity or
-instrumentation path requests it, because software-only startup can otherwise spend its Android
-startup budget resolving the controller before the test runner attaches.
+app and instrumentation APKs. Both are explicitly unsigned; the workflow rejects JAR
+signature metadata, APK Signing Blocks, `.idsig` files, and generated signing material,
+then requires `aapt2`, `zipalign`, and `apksigner` to produce their expected independent
+verdicts. Only packages that pass every check are copied into the uploaded staging
+directory; a rejected signed package stays out. Android refuses to install an unsigned APK, so this workflow does not launch
+instrumentation or claim an on-device result. It records `instrumentation-skip.txt`
+beside the static package and unit-test evidence. The application bootstrap still keeps
+QEMU controller construction deferred until the Activity requests it.
 
 ## Failure modes
 
@@ -59,17 +56,11 @@ startup budget resolving the controller before the test runner attaches.
   dependency asset, or either allowlisted QEMU data root is rejected before the emulator
   job; the workflow also requires a
   non-empty data count, an exact match with `qemu-build.json`, and a byte count at or
-  below 64 MiB. APK zip alignment is checked for 16 KiB.
-- The instrumentation smoke test is skipped for a source-only APK in ordinary local
-  `connectedDebugAndroidTest`, and the hosted native workflow records an explicit
-  no-KVM skip when `/dev/kvm` is unavailable. When live instrumentation runs, the
-  workflow passes `-PopenvmRequireNativeRuntime=true` and selects the named native
-  runtime and asset classes, so a missing runtime fails rather than becoming an
-  accidental source-only pass.
-- A software-only emulator may boot successfully and still fail instrumentation before any test
-  starts if the target application hits an Android startup ANR. The workflow collects logcat,
-  memory, and device properties in that case; the application bootstrap fix in commit
-  [`2aa0083`](https://github.com/MatDayProjects/material-android/commit/2aa00832bbfab20ee5159a633e5426c6ced5abaf) defers controller construction to avoid that false `0/0` test result.
+  below 64 MiB. APK structure, package metadata, and zip alignment are checked before
+  the no-signature verdict is accepted.
+- Android installation and instrumentation are unavailable for the current unsigned
+  APK. Any historical debug-signed instrumentation run is diagnostic history, not
+  evidence for the current build contract.
 - `--version` and `-machine help` prove an executable and its library closure, not an
   Android guest boot. A missing kernel, initrd, raw image, display handshake, or guest
   readiness signal remains a separate failure.
@@ -79,8 +70,10 @@ startup budget resolving the controller before the test runner attaches.
 QEMU and guest images execute with the app process's Android permissions. Source
 availability and checksum validation are provenance and integrity controls, not a
 guest sandbox. The workflow never accepts a runtime from a mutable app download,
-never commits a keystore or binary, and uploads only the generated runtime, APK, test
-reports, and provenance evidence. The collector rejects libraries outside the pinned
+never creates or uses a signing identity, never commits a keystore or binary, and
+uploads only the generated runtime, post-verification unsigned APKs, unit-test reports,
+CI context manifest, boundary record,
+and provenance evidence. The collector rejects libraries outside the pinned
 Termux prefix, validates the Android loader and ELF machine, enforces 16 KiB load
 alignment, uses an explicit QEMU data allowlist, and caps the bundled runtime data at
 64 MiB. The app's local library marker rejects stale, incomplete, extra, or modified
@@ -97,12 +90,13 @@ bash -n native/qemu/build-android.sh native/qemu/collect-runtime.sh
 native/qemu/build-android.sh --verify-only
 ```
 
-The Android control plane remains covered by `testDebugUnitTest`, `assembleDebug`, and
-the API 37 emulator suite. The native workflow adds exact source/patch verification,
-ELF/runtime collection, versioned APK member checks, and the API 35 emulator's QEMU
-`--version`/`-machine help` plus production-controller smoke tests. A real guest boot is
-still unverified until a compatible Android guest image and boot readiness contract are
-exercised.
+The Android control plane remains covered by `testDebugUnitTest`, explicitly unsigned
+`assembleDebug`, and explicitly unsigned `assembleDebugAndroidTest` artifacts. The native
+workflow adds exact source/patch verification, ELF/runtime collection, versioned APK
+member checks, archive/package/alignment checks, and independent signature-structure
+checks. No current workflow installs the APK or proves QEMU
+execution on Android. A real guest boot is still unverified until a compatible Android
+guest image and boot readiness contract are exercised.
 
 ## Suggested articles
 

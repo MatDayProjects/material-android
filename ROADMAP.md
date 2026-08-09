@@ -5,6 +5,8 @@
 - Add screenshot-driven UI regression coverage on supported Android API levels.
 - Add profile duplication, bulk export, and explicit image metadata validation.
 - Add an in-app documentation browser for the feature articles.
+- ✅ Keep every generated APK/AAB unsigned and fail closed on JAR signatures, APK
+  Signing Blocks, detached signatures, or generated signing material.
 
 ## 0.2.x · Native QEMU adapter
 

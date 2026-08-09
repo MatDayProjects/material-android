@@ -65,10 +65,14 @@ android {
 
     buildTypes {
         debug {
+            // Android Gradle Plugin otherwise injects its generated Android Debug
+            // identity. OpenVM artifacts are deliberately unsigned in every variant.
+            signingConfig = null
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
         release {
+            signingConfig = null
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -88,6 +92,18 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 }
+
+val verifyUnsignedBuildTypes by tasks.registering {
+    doLast {
+        listOf("debug", "release").forEach { buildTypeName ->
+            check(android.buildTypes.getByName(buildTypeName).signingConfig == null) {
+                "OpenVM $buildTypeName artifacts must remain unsigned"
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(verifyUnsignedBuildTypes) }
 
 dependencies {
     implementation(libs.androidx.core.ktx)

@@ -43,6 +43,7 @@ jobs:
         run: bash native/qemu/build-android.sh --verify-only
 
       - name: Build and collect the Android runtime
+        id: runtime_build
         run: |
           set -euo pipefail
           bash native/qemu/build-android.sh \
@@ -61,6 +62,26 @@ jobs:
             (.qemuDataPolicy == "allowlist") and
             (.qemuDataFiles == $manifest[0].packaging.qemuDataFiles)
           ' "native/qemu/dist/${{ matrix.abi }}/runtime.json"
+
+      - name: Collect runtime job context
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/qemu/dist
+          printf '%s\n' \
+            "workflow=${GITHUB_WORKFLOW}" \
+            "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "commit=${GITHUB_SHA}" \
+            "job=${GITHUB_JOB}" \
+            "abi=${{ matrix.abi }}" \
+            "runtime_step_outcome=${{ steps.runtime_build.outcome }}" \
+            "runner_os=${RUNNER_OS}" \
+            "runner_arch=${RUNNER_ARCH}" \
+            "runner_name=${RUNNER_NAME}" \
+            > "native/qemu/dist/ci-context-${{ matrix.abi }}.txt"
 
       - name: Upload runtime and build evidence
         if: ${{ always() }}
@@ -95,7 +116,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
-          packages: platform-tools emulator system-images;android-35;default;x86_64 platforms;android-35 build-tools;35.0.0
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
 
       - name: Put Android build-tools on PATH
         shell: bash
@@ -105,8 +126,17 @@ jobs:
           [[ -n "$sdk_root" ]] || { echo "Android SDK root was not provided by setup-android." >&2; exit 1; }
           build_tools="$sdk_root/build-tools/35.0.0"
           [[ -x "$build_tools/zipalign" ]] || { echo "zipalign is missing from $build_tools" >&2; exit 1; }
+          [[ -x "$build_tools/apksigner" ]] || { echo "apksigner is missing from $build_tools" >&2; exit 1; }
+          [[ -x "$build_tools/aapt2" ]] || { echo "aapt2 is missing from $build_tools" >&2; exit 1; }
+          if ! command -v python3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3
+          fi
           export PATH="$build_tools:$PATH"
           command -v zipalign
+          command -v apksigner
+          command -v aapt2
+          command -v python3
           echo "$build_tools" >> "$GITHUB_PATH"
 
       - name: Download both native runtime ABIs
@@ -142,13 +172,34 @@ jobs:
           done
 
       - name: Build APK with the generated runtime
+        id: package_build
         shell: bash
         run: |
           set -euo pipefail
+          export LC_ALL=C
           chmod +x ./gradlew
-          ./gradlew --no-daemon --no-scan --stacktrace testDebugUnitTest assembleDebug
-          apk="$(find app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
-          test -n "$apk"
+
+          unsigned_root="$RUNNER_TEMP/openvm-unsigned-build"
+          export HOME="$unsigned_root/home"
+          export ANDROID_USER_HOME="$unsigned_root/android"
+          export GRADLE_USER_HOME="$unsigned_root/gradle"
+          mkdir -p "$HOME" "$ANDROID_USER_HOME" "$GRADLE_USER_HOME"
+
+          ./gradlew --no-daemon --no-scan --stacktrace clean \
+            testDebugUnitTest assembleDebug assembleDebugAndroidTest
+
+          mapfile -d '' app_apks < <(
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print0
+          )
+          mapfile -d '' instrumentation_apks < <(
+            find app/build/outputs/apk/androidTest/debug -maxdepth 1 -type f -name '*.apk' -print0
+          )
+          if (( ${#app_apks[@]} != 1 || ${#instrumentation_apks[@]} != 1 )); then
+            echo "Expected exactly one debug app APK and one instrumentation APK." >&2
+            exit 1
+          fi
+          built_apks=("${app_apks[@]}" "${instrumentation_apks[@]}")
+          apk="${app_apks[0]}"
           unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-x86_64.so'
           unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
           unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-aarch64.so'
@@ -157,99 +208,79 @@ jobs:
           unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/lib/libz.so.1'
           unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
           unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
-          zipalign -c -P 16 4 "$apk"
 
-      - name: Run the packaged-runtime instrumentation smoke test when KVM is available
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if [[ ! -e /dev/kvm || ! -r /dev/kvm ]]; then
-            mkdir -p app/build/outputs/logs
-            printf '%s\n' \
-              'Live Android instrumentation was not run on this GitHub Actions runner.' \
-              'Reason: /dev/kvm is missing or is not readable by the job user.' \
-              'The APK, unit tests, native runtime assets, manifest checks, and zip alignment were still verified.' \
-              'The live emulator lane requires a Linux host with usable KVM permissions.' \
-              > app/build/outputs/logs/emulator-skip.txt
-            echo "::warning::Live Android instrumentation skipped: this GitHub Actions runner has no usable /dev/kvm; see emulator-skip.txt in the evidence artifact."
-            exit 0
-          fi
-          avd_name="openvm-api35"
-          avd_home="${RUNNER_TEMP}/openvm-avd"
-          emulator_log="${RUNNER_TEMP}/openvm-emulator.log"
-          mkdir -p "$avd_home" app/build/outputs/logs
-          export ANDROID_AVD_HOME="$avd_home"
-          export ANDROID_EMULATOR_HOME="$avd_home"
-          export PATH="$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          command -v adb
-          command -v avdmanager
-          command -v emulator
-          echo no | avdmanager create avd --force --name "$avd_name" --package "system-images;android-35;default;x86_64" --device "pixel_2"
-          emulator_pid=""
-          cleanup() {
+          python3 scripts/verify_unsigned_android_artifacts.py \
+            --forbid-signing-material-root . \
+            --forbid-signing-material-root "$HOME" \
+            --forbid-signing-material-root "$ANDROID_USER_HOME" \
+            --forbid-signing-material-root "$GRADLE_USER_HOME" \
+            app/build/outputs/apk
+
+          for built_apk in "${built_apks[@]}"; do
+            zipalign -c -P 16 4 "$built_apk"
+            aapt2 dump badging "$built_apk" >/dev/null
             set +e
-            timeout --foreground --kill-after=5s --signal=TERM 30s adb -s emulator-5554 logcat -d -t 2000 -v threadtime > app/build/outputs/logs/logcat.txt 2>&1 || true
-            timeout --foreground --kill-after=5s --signal=TERM 30s adb -s emulator-5554 shell dumpsys meminfo org.openvm.app.debug > app/build/outputs/logs/meminfo.txt 2>&1 || true
-            timeout --foreground --kill-after=5s --signal=TERM 30s adb -s emulator-5554 shell getprop > app/build/outputs/logs/device-properties.txt 2>&1 || true
-            adb -s emulator-5554 emu kill >/dev/null 2>&1 || true
-            if [[ -n "$emulator_pid" ]]; then
-              kill "$emulator_pid" >/dev/null 2>&1 || true
-              wait "$emulator_pid" >/dev/null 2>&1 || true
-            fi
-            if [[ -f "$emulator_log" ]]; then
-              cp "$emulator_log" app/build/outputs/logs/emulator.log || true
-            fi
-          }
-          trap cleanup EXIT
-          # Hosted Linux runners may not expose /dev/kvm. Keep the x86_64 image so
-          # this lane exercises the packaged x86_64 runtime, but force the
-          # emulator's documented software VM path when hardware acceleration is
-          # unavailable. Keep rendering disabled too: SwiftShader made the
-          # software-only guest spend its scarce CPU budget on system UI and
-          # network-stack rendering before the APK could install.
-          emulator -avd "$avd_name" -no-accel -memory 4096 -cores 4 -no-window -no-audio -no-boot-anim -gpu off -no-snapshot -camera-back none -port 5554 >"$emulator_log" 2>&1 &
-          emulator_pid=$!
-          adb start-server
-          booted=0
-          for attempt in $(seq 1 600); do
-            if timeout --foreground --kill-after=5s --signal=TERM 15s adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -qx '1'; then
-              booted=1
-              break
-            fi
-            if ! kill -0 "$emulator_pid" 2>/dev/null; then
-              cat "$emulator_log"
+            verifier_output="$(apksigner verify --verbose "$built_apk" 2>&1)"
+            verifier_status=$?
+            set -e
+            if (( verifier_status == 0 )); then
+              echo "APK unexpectedly verifies as signed: ${built_apk#./}" >&2
               exit 1
             fi
-            sleep 1
-          done
-          if [[ "$booted" -ne 1 ]]; then
-            cat "$emulator_log"
-            echo "Android emulator did not finish booting after 600 seconds" >&2
-            exit 1
-          fi
-          package_ready=0
-          for attempt in $(seq 1 60); do
-            if timeout --foreground --kill-after=5s --signal=TERM 15s adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
-              package_ready=1
-              break
+            if ! grep -Fq 'DOES NOT VERIFY' <<<"$verifier_output"; then
+              echo "apksigner failed for an unexpected reason: ${built_apk#./}" >&2
+              printf '%s\n' "$verifier_output" >&2
+              exit 1
             fi
-            sleep 2
           done
-          if [[ "$package_ready" -ne 1 ]]; then
-            cat "$emulator_log"
-            echo "Android package service did not become ready after 120 seconds" >&2
-            exit 1
+
+          verified_dir="$RUNNER_TEMP/openvm-verified-native-apks"
+          mkdir -p "$verified_dir"
+          for built_apk in "${built_apks[@]}"; do
+            artifact_name="$(basename "$built_apk")"
+            [[ ! -e "$verified_dir/$artifact_name" ]] || { echo "Verified APK name collision: $artifact_name" >&2; exit 1; }
+            cp -- "$built_apk" "$verified_dir/$artifact_name"
+          done
+
+      - name: Record the unsigned instrumentation boundary
+        id: instrumentation_boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/build/outputs/logs
+          printf '%s\n' \
+            'Live Android instrumentation was not run.' \
+            'Reason: Android refuses to install an unsigned APK, and this project does not generate or use a signing identity.' \
+            'The unsigned APK, unit tests, native runtime assets, manifest checks, and zip alignment were still verified.' \
+            'Runtime instrumentation cannot run under the permanent no-signing policy.' \
+            > app/build/outputs/logs/instrumentation-skip.txt
+          echo "::warning::Live Android instrumentation skipped because the APK is deliberately unsigned; see instrumentation-skip.txt in the evidence artifact."
+
+      - name: Collect safe packaged evidence
+        id: collect_package
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/openvm-qemu-package-evidence"
+          mkdir -p "$evidence_dir"
+          printf '%s\n' \
+            "workflow=${GITHUB_WORKFLOW}" \
+            "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "commit=${GITHUB_SHA}" \
+            "job=${GITHUB_JOB}" \
+            "package_step_outcome=${{ steps.package_build.outcome }}" \
+            "boundary_step_outcome=${{ steps.instrumentation_boundary.outcome }}" \
+            "runner_os=${RUNNER_OS}" \
+            "runner_arch=${RUNNER_ARCH}" \
+            "runner_name=${RUNNER_NAME}" \
+            > "$evidence_dir/ci-context.txt"
+          if [[ -d "$RUNNER_TEMP/openvm-verified-native-apks" ]]; then
+            cp -a "$RUNNER_TEMP/openvm-verified-native-apks/." "$evidence_dir/"
           fi
-          # Boot completion only means the property flipped; software-only TCG
-          # emulators can still be draining the framework's post-boot work.
-          # Give system_server a bounded settling window before instrumentation
-          # starts, otherwise the target application can be killed by a startup
-          # ANR before the first test is attached.
-          for settle_attempt in $(seq 1 45); do
-            echo "Waiting for software emulator post-boot stabilization (${settle_attempt}/45)"
-            sleep 2
-          done
-          timeout --foreground --kill-after=45s --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest,org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload packaged APK and test evidence
         if: ${{ always() }}
@@ -258,7 +289,7 @@ jobs:
         with:
           name: openvm-qemu-apk-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: |
-            app/build/outputs/apk/debug/*.apk
+            ${{ steps.collect_package.outputs.evidence_dir }}
             app/build/test-results/**/*.xml
             app/build/reports/tests/**/*.html
             app/build/outputs/androidTest-results/**/*.xml

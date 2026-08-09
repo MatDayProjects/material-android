@@ -38,65 +38,120 @@ jobs:
         with:
           packages: platform-tools platforms;android-35 build-tools;35.0.0
 
-      - name: Ensure apksigner is available
+      - name: Put Android build-tools on PATH
         shell: bash
         run: |
           set -euo pipefail
 
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          if [[ -z "$sdk_root" ]]; then
-            echo "Android SDK root was not provided by setup-android." >&2
-            exit 1
+          [[ -n "$sdk_root" ]] || { echo "Android SDK root was not provided by setup-android." >&2; exit 1; }
+          build_tools="$sdk_root/build-tools/35.0.0"
+          for tool in aapt2 apksigner zipalign; do
+            [[ -x "$build_tools/$tool" ]] || { echo "$tool is missing from $build_tools" >&2; exit 1; }
+          done
+          if ! command -v python3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3
           fi
+          command -v python3
+          echo "$build_tools" >> "$GITHUB_PATH"
 
-          mapfile -t apksigners < <(
-            find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
-          )
-          if (( ${#apksigners[@]} == 0 )); then
-            sdkmanager "build-tools;35.0.0" >/dev/null
-            mapfile -t apksigners < <(
-              find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
-            )
-          fi
-
-          if (( ${#apksigners[@]} == 0 )); then
-            echo "No Android build-tools installation provides apksigner." >&2
-            exit 1
-          fi
-
-          apksigner_path="${apksigners[${#apksigners[@]}-1]}"
-          echo "APKSIGNER_PATH=$apksigner_path" >> "$GITHUB_ENV"
-
-      - name: Build and verify debug APKs
+      - name: Build and verify unsigned debug APKs
+        id: debug_build
         shell: bash
         run: |
           set -euo pipefail
+          export LC_ALL=C
           chmod +x ./gradlew
 
-          ./gradlew --no-daemon --no-scan --stacktrace \
-            testDebugUnitTest assembleDebug
+          unsigned_root="$RUNNER_TEMP/openvm-unsigned-build"
+          export HOME="$unsigned_root/home"
+          export ANDROID_USER_HOME="$unsigned_root/android"
+          export GRADLE_USER_HOME="$unsigned_root/gradle"
+          mkdir -p "$HOME" "$ANDROID_USER_HOME" "$GRADLE_USER_HOME"
 
-          mapfile -d '' debug_apks < <(
-            find . -type f -path '*/build/outputs/apk/debug/*.apk' -print0
+          ./gradlew --no-daemon --no-scan --stacktrace clean \
+            testDebugUnitTest assembleDebug assembleDebugAndroidTest
+
+          mapfile -d '' app_apks < <(
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print0
           )
-          if (( ${#debug_apks[@]} == 0 )); then
-            echo "Gradle completed without producing a debug APK." >&2
+          mapfile -d '' instrumentation_apks < <(
+            find app/build/outputs/apk/androidTest/debug -maxdepth 1 -type f -name '*.apk' -print0
+          )
+          if (( ${#app_apks[@]} != 1 || ${#instrumentation_apks[@]} != 1 )); then
+            echo "Expected exactly one debug app APK and one instrumentation APK." >&2
             exit 1
           fi
+          built_apks=("${app_apks[@]}" "${instrumentation_apks[@]}")
 
-          for apk in "${debug_apks[@]}"; do
-            "$APKSIGNER_PATH" verify --verbose "$apk" >/dev/null
-            echo "Verified debug APK: ${apk#./}"
+          python3 scripts/verify_unsigned_android_artifacts.py \
+            --forbid-signing-material-root . \
+            --forbid-signing-material-root "$HOME" \
+            --forbid-signing-material-root "$ANDROID_USER_HOME" \
+            --forbid-signing-material-root "$GRADLE_USER_HOME" \
+            app/build/outputs/apk
+
+          for apk in "${built_apks[@]}"; do
+            zipalign -c -P 16 4 "$apk"
+            aapt2 dump badging "$apk" >/dev/null
+            set +e
+            verifier_output="$(apksigner verify --verbose "$apk" 2>&1)"
+            verifier_status=$?
+            set -e
+            if (( verifier_status == 0 )); then
+              echo "APK unexpectedly verifies as signed: ${apk#./}" >&2
+              exit 1
+            fi
+            if ! grep -Fq 'DOES NOT VERIFY' <<<"$verifier_output"; then
+              echo "apksigner failed for an unexpected reason: ${apk#./}" >&2
+              printf '%s\n' "$verifier_output" >&2
+              exit 1
+            fi
+            echo "Verified valid unsigned APK: ${apk#./}"
           done
+
+          verified_dir="$RUNNER_TEMP/openvm-verified-debug-apks"
+          mkdir -p "$verified_dir"
+          for apk in "${built_apks[@]}"; do
+            artifact_name="$(basename "$apk")"
+            [[ ! -e "$verified_dir/$artifact_name" ]] || { echo "Verified APK name collision: $artifact_name" >&2; exit 1; }
+            cp -- "$apk" "$verified_dir/$artifact_name"
+          done
+
+      - name: Collect safe debug evidence
+        id: collect_debug
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/android-debug-evidence"
+          mkdir -p "$evidence_dir"
+          printf '%s\n' \
+            "workflow=${GITHUB_WORKFLOW}" \
+            "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "commit=${GITHUB_SHA}" \
+            "job=${GITHUB_JOB}" \
+            "verification_step_outcome=${{ steps.debug_build.outcome }}" \
+            "runner_os=${RUNNER_OS}" \
+            "runner_arch=${RUNNER_ARCH}" \
+            "runner_name=${RUNNER_NAME}" \
+            > "$evidence_dir/ci-context.txt"
+          if [[ -d "$RUNNER_TEMP/openvm-verified-debug-apks" ]]; then
+            cp -a "$RUNNER_TEMP/openvm-verified-debug-apks/." "$evidence_dir/"
+          fi
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload safe debug evidence
         if: ${{ always() }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-debug-evidence-${{ github.run_id }}
+          name: android-debug-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: |
-            **/build/outputs/apk/debug/*.apk
+            ${{ steps.collect_debug.outputs.evidence_dir }}
             **/build/test-results/**/*.xml
             **/build/reports/tests/**/*.html
             **/build/reports/lint-results-*.html

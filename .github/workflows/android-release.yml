@@ -58,6 +58,7 @@ jobs:
         run: bash native/qemu/build-android.sh --verify-only
 
       - name: Build and collect the Android runtime
+        id: runtime_build
         shell: bash
         run: |
           set -euo pipefail
@@ -78,6 +79,26 @@ jobs:
             (.qemuDataPolicy == "allowlist") and
             (.qemuDataFiles == $manifest[0].packaging.qemuDataFiles)
           ' "native/qemu/dist/${{ matrix.abi }}/runtime.json"
+
+      - name: Collect runtime job context
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/qemu/dist
+          printf '%s\n' \
+            "workflow=${GITHUB_WORKFLOW}" \
+            "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "commit=${GITHUB_SHA}" \
+            "job=${GITHUB_JOB}" \
+            "abi=${{ matrix.abi }}" \
+            "runtime_step_outcome=${{ steps.runtime_build.outcome }}" \
+            "runner_os=${RUNNER_OS}" \
+            "runner_arch=${RUNNER_ARCH}" \
+            "runner_name=${RUNNER_NAME}" \
+            > "native/qemu/dist/ci-context-${{ matrix.abi }}.txt"
 
       - name: Upload native runtime evidence
         if: ${{ always() }}
@@ -128,8 +149,17 @@ jobs:
           [[ -n "$sdk_root" ]] || { echo "Android SDK root was not provided by setup-android." >&2; exit 1; }
           build_tools="$sdk_root/build-tools/35.0.0"
           [[ -x "$build_tools/zipalign" ]] || { echo "zipalign is missing from $build_tools" >&2; exit 1; }
+          [[ -x "$build_tools/apksigner" ]] || { echo "apksigner is missing from $build_tools" >&2; exit 1; }
+          [[ -x "$build_tools/aapt2" ]] || { echo "aapt2 is missing from $build_tools" >&2; exit 1; }
+          if ! command -v python3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3
+          fi
           export PATH="$build_tools:$PATH"
           command -v zipalign
+          command -v apksigner
+          command -v aapt2
+          command -v python3
           echo "$build_tools" >> "$GITHUB_PATH"
 
       - name: Download both native runtime ABIs
@@ -155,34 +185,102 @@ jobs:
           test -d native/qemu/runtime/x86_64/share/qemu
 
       - name: Build and verify debug APKs
+        id: debug_build
         shell: bash
         run: |
           set -euo pipefail
+          export LC_ALL=C
           chmod +x ./gradlew
 
-          ./gradlew --no-daemon --no-scan --stacktrace \
-            testDebugUnitTest assembleDebug
+          unsigned_root="$RUNNER_TEMP/openvm-unsigned-build"
+          export HOME="$unsigned_root/home"
+          export ANDROID_USER_HOME="$unsigned_root/android"
+          export GRADLE_USER_HOME="$unsigned_root/gradle"
+          mkdir -p "$HOME" "$ANDROID_USER_HOME" "$GRADLE_USER_HOME"
 
-          mapfile -d '' debug_apks < <(
-            find . -type f -path '*/build/outputs/apk/debug/*.apk' -print0
+          ./gradlew --no-daemon --no-scan --stacktrace clean \
+            testDebugUnitTest assembleDebug assembleDebugAndroidTest
+
+          mapfile -d '' app_apks < <(
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print0
           )
-          if (( ${#debug_apks[@]} == 0 )); then
-            echo "Gradle completed without producing a debug APK." >&2
+          mapfile -d '' instrumentation_apks < <(
+            find app/build/outputs/apk/androidTest/debug -maxdepth 1 -type f -name '*.apk' -print0
+          )
+          if (( ${#app_apks[@]} != 1 || ${#instrumentation_apks[@]} != 1 )); then
+            echo "Expected exactly one debug app APK and one instrumentation APK." >&2
             exit 1
           fi
+          built_apks=("${app_apks[@]}" "${instrumentation_apks[@]}")
 
-          for apk in "${debug_apks[@]}"; do
-            unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
-            unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-x86_64.so'
-            unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-aarch64.so'
-            unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-x86_64.so'
-            unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/lib/libz.so.1'
-            unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/lib/libz.so.1'
-            unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
-            unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
+          debug_app_apk="${app_apks[0]}"
+          unzip -l "$debug_app_apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
+          unzip -l "$debug_app_apk" | grep -F 'lib/x86_64/libopenvm-qemu-x86_64.so'
+          unzip -l "$debug_app_apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-aarch64.so'
+          unzip -l "$debug_app_apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-x86_64.so'
+          unzip -l "$debug_app_apk" | grep -F 'assets/native-qemu/x86_64/lib/libz.so.1'
+          unzip -l "$debug_app_apk" | grep -F 'assets/native-qemu/arm64-v8a/lib/libz.so.1'
+          unzip -l "$debug_app_apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
+          unzip -l "$debug_app_apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
+
+          python3 scripts/verify_unsigned_android_artifacts.py \
+            --forbid-signing-material-root . \
+            --forbid-signing-material-root "$HOME" \
+            --forbid-signing-material-root "$ANDROID_USER_HOME" \
+            --forbid-signing-material-root "$GRADLE_USER_HOME" \
+            app/build/outputs/apk
+
+          for apk in "${built_apks[@]}"; do
             zipalign -c -P 16 4 "$apk"
-            echo "Verified unsigned debug APK: ${apk#./}"
+            aapt2 dump badging "$apk" >/dev/null
+            set +e
+            verifier_output="$(apksigner verify --verbose "$apk" 2>&1)"
+            verifier_status=$?
+            set -e
+            if (( verifier_status == 0 )); then
+              echo "APK unexpectedly verifies as signed: ${apk#./}" >&2
+              exit 1
+            fi
+            if ! grep -Fq 'DOES NOT VERIFY' <<<"$verifier_output"; then
+              echo "apksigner failed for an unexpected reason: ${apk#./}" >&2
+              printf '%s\n' "$verifier_output" >&2
+              exit 1
+            fi
+            echo "Verified valid unsigned APK: ${apk#./}"
           done
+
+          verified_dir="$RUNNER_TEMP/openvm-verified-release-debug-apks"
+          mkdir -p "$verified_dir"
+          for apk in "${built_apks[@]}"; do
+            artifact_name="$(basename "$apk")"
+            [[ ! -e "$verified_dir/$artifact_name" ]] || { echo "Verified APK name collision: $artifact_name" >&2; exit 1; }
+            cp -- "$apk" "$verified_dir/$artifact_name"
+          done
+
+      - name: Collect safe pre-release evidence
+        id: collect_debug
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/android-release-debug-evidence"
+          mkdir -p "$evidence_dir"
+          printf '%s\n' \
+            "workflow=${GITHUB_WORKFLOW}" \
+            "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "commit=${GITHUB_SHA}" \
+            "job=${GITHUB_JOB}" \
+            "verification_step_outcome=${{ steps.debug_build.outcome }}" \
+            "runner_os=${RUNNER_OS}" \
+            "runner_arch=${RUNNER_ARCH}" \
+            "runner_name=${RUNNER_NAME}" \
+            > "$evidence_dir/ci-context.txt"
+          if [[ -d "$RUNNER_TEMP/openvm-verified-release-debug-apks" ]]; then
+            cp -a "$RUNNER_TEMP/openvm-verified-release-debug-apks/." "$evidence_dir/"
+          fi
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload safe pre-release evidence
         if: ${{ always() }}
@@ -191,7 +289,7 @@ jobs:
         with:
           name: android-release-debug-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: |
-            **/build/outputs/apk/debug/*.apk
+            ${{ steps.collect_debug.outputs.evidence_dir }}
             **/build/test-results/**/*.xml
             **/build/reports/tests/**/*.html
             **/build/reports/lint-results-*.html
@@ -236,9 +334,40 @@ jobs:
           [[ -n "$sdk_root" ]] || { echo "Android SDK root was not provided by setup-android." >&2; exit 1; }
           build_tools="$sdk_root/build-tools/35.0.0"
           [[ -x "$build_tools/zipalign" ]] || { echo "zipalign is missing from $build_tools" >&2; exit 1; }
+          [[ -x "$build_tools/apksigner" ]] || { echo "apksigner is missing from $build_tools" >&2; exit 1; }
+          [[ -x "$build_tools/aapt2" ]] || { echo "aapt2 is missing from $build_tools" >&2; exit 1; }
+          if ! command -v python3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3
+          fi
           export PATH="$build_tools:$PATH"
           command -v zipalign
+          command -v apksigner
+          command -v aapt2
+          command -v python3
+          command -v jarsigner
           echo "$build_tools" >> "$GITHUB_PATH"
+
+      - name: Bootstrap pinned bundletool validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundletool_version="1.18.3"
+          bundletool_sha256="a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
+          bundletool_dir="$RUNNER_TEMP/bundletool"
+          bundletool_jar="$bundletool_dir/bundletool-all-$bundletool_version.jar"
+          mkdir -p "$bundletool_dir"
+          if ! command -v curl >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends curl
+          fi
+          command -v sha256sum
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            "https://github.com/google/bundletool/releases/download/$bundletool_version/bundletool-all-$bundletool_version.jar" \
+            --output "$bundletool_jar.download"
+          printf '%s  %s\n' "$bundletool_sha256" "$bundletool_jar.download" | sha256sum --check --strict
+          mv "$bundletool_jar.download" "$bundletool_jar"
+          echo "BUNDLETOOL_JAR=$bundletool_jar" >> "$GITHUB_ENV"
 
       - name: Download both native runtime ABIs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -267,13 +396,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export LC_ALL=C
 
           artifact_dir="${RUNNER_TEMP}/android-release-artifacts"
           mkdir -p "$artifact_dir"
           echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
 
+          unsigned_root="$RUNNER_TEMP/openvm-unsigned-build"
+          export HOME="$unsigned_root/home"
+          export ANDROID_USER_HOME="$unsigned_root/android"
+          export GRADLE_USER_HOME="$unsigned_root/gradle"
+          mkdir -p "$HOME" "$ANDROID_USER_HOME" "$GRADLE_USER_HOME"
+
           chmod +x ./gradlew
-          ./gradlew --no-daemon --no-scan --stacktrace \
+          ./gradlew --no-daemon --no-scan --stacktrace clean \
             assembleRelease bundleRelease
 
           mapfile -d '' unsigned_release_apks < <(
@@ -300,6 +436,13 @@ jobs:
             exit 1
           fi
 
+          python3 scripts/verify_unsigned_android_artifacts.py \
+            --forbid-signing-material-root . \
+            --forbid-signing-material-root "$HOME" \
+            --forbid-signing-material-root "$ANDROID_USER_HOME" \
+            --forbid-signing-material-root "$GRADLE_USER_HOME" \
+            app/build/outputs/apk app/build/outputs/bundle
+
           for apk in "${release_apks[@]}"; do
             unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
             unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-x86_64.so'
@@ -310,8 +453,23 @@ jobs:
             unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
             unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
             zipalign -c -P 16 4 "$apk"
+            aapt2 dump badging "$apk" >/dev/null
+            set +e
+            verifier_output="$(apksigner verify --verbose "$apk" 2>&1)"
+            verifier_status=$?
+            set -e
+            if (( verifier_status == 0 )); then
+              echo "Release APK unexpectedly verifies as signed: ${apk#./}" >&2
+              exit 1
+            fi
+            if ! grep -Fq 'DOES NOT VERIFY' <<<"$verifier_output"; then
+              echo "apksigner failed for an unexpected reason: ${apk#./}" >&2
+              printf '%s\n' "$verifier_output" >&2
+              exit 1
+            fi
           done
           for aab in "${release_aabs[@]}"; do
+            artifact_name="$(basename "$aab")"
             unzip -l "$aab" | grep -F 'base/lib/x86_64/libopenvm-qemu-aarch64.so'
             unzip -l "$aab" | grep -F 'base/lib/x86_64/libopenvm-qemu-x86_64.so'
             unzip -l "$aab" | grep -F 'base/lib/arm64-v8a/libopenvm-qemu-aarch64.so'
@@ -320,6 +478,16 @@ jobs:
             unzip -l "$aab" | grep -F 'base/assets/native-qemu/arm64-v8a/lib/libz.so.1'
             unzip -l "$aab" | grep -F 'base/assets/native-qemu/x86_64/share/qemu/'
             unzip -l "$aab" | grep -F 'base/assets/native-qemu/arm64-v8a/share/qemu/'
+            java -jar "$BUNDLETOOL_JAR" validate --bundle="$aab" \
+              > "$artifact_dir/$artifact_name.bundletool-validation.txt"
+            set +e
+            jarsigner_output="$(jarsigner -verify -strict "$aab" 2>&1)"
+            set -e
+            if ! grep -Fqi 'jar is unsigned' <<<"$jarsigner_output"; then
+              echo "jarsigner did not explicitly identify the AAB as unsigned: ${aab#./}" >&2
+              printf '%s\n' "$jarsigner_output" >&2
+              exit 1
+            fi
           done
 
           verification_file="$artifact_dir/verification.txt"
@@ -330,10 +498,6 @@ jobs:
             destination="$artifact_dir/$artifact_name"
             if [[ -e "$destination" ]]; then
               echo "Release artifact name collision: $artifact_name" >&2
-              exit 1
-            fi
-            if unzip -l "$apk" | grep -Eq 'META-INF/[^ ]+\.(RSA|DSA|EC|SF)$'; then
-              echo "Release APK unexpectedly contains signing metadata: $artifact_name" >&2
               exit 1
             fi
             cp -- "$apk" "$destination"
@@ -347,10 +511,6 @@ jobs:
               echo "Release artifact name collision: $artifact_name" >&2
               exit 1
             fi
-            if unzip -l "$aab" | grep -Eq 'META-INF/[^ ]+\.(RSA|DSA|EC|SF)$'; then
-              echo "Release AAB unexpectedly contains signing metadata: $artifact_name" >&2
-              exit 1
-            fi
             cp -- "$aab" "$destination"
             printf 'Unsigned AAB verified: %s\n' "$artifact_name" >> "$verification_file"
           done
@@ -360,13 +520,38 @@ jobs:
             sha256sum -- *.apk *.aab > SHA256SUMS.txt
           )
 
+      - name: Collect release job context
+        id: collect_release
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${{ steps.release.outputs.artifact_dir }}"
+          if [[ -z "$artifact_dir" ]]; then
+            artifact_dir="$RUNNER_TEMP/android-release-artifacts"
+            mkdir -p "$artifact_dir"
+          fi
+          printf '%s\n' \
+            "workflow=${GITHUB_WORKFLOW}" \
+            "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "commit=${GITHUB_SHA}" \
+            "job=${GITHUB_JOB}" \
+            "release_step_outcome=${{ steps.release.outcome }}" \
+            "runner_os=${RUNNER_OS}" \
+            "runner_arch=${RUNNER_ARCH}" \
+            "runner_name=${RUNNER_NAME}" \
+            > "$artifact_dir/ci-context.txt"
+          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
+
       - name: Upload safe unsigned release evidence
         if: ${{ always() }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
-          path: ${{ steps.release.outputs.artifact_dir }}
+          path: ${{ steps.collect_release.outputs.artifact_dir }}
           if-no-files-found: warn
           retention-days: 30
 

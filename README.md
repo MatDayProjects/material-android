@@ -62,11 +62,13 @@ Requirements:
 - Network access for the first Gradle dependency resolution.
 
 ```powershell
-./gradlew testDebugUnitTest
-./gradlew assembleDebug
+./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest
+py -3 scripts/verify_unsigned_android_artifacts.py app/build/outputs/apk
 ```
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+The debug app APK is written to
+`app/build/outputs/apk/debug/app-debug-unsigned.apk`; the instrumentation package is
+also built unsigned and inspected without installing it.
 
 The optional native QEMU lane additionally needs Linux, Docker, `jq`, `curl`, `readelf`,
 and `sha256sum`; GitHub Actions provides that environment. It targets Android API 29+
@@ -76,7 +78,7 @@ patch pins without creating a runtime locally.
 
 ## Unsigned release artifacts
 
-OpenVM intentionally does not generate, store, or use a code-signing certificate. GitHub Actions builds reproducible unsigned release APK/AAB artifacts, checks their QEMU contents and alignment, rejects signing metadata, and publishes checksums. Unsigned APKs may trigger an Android unknown-publisher warning. See [Android build and unsigned release artifacts](docs/ci/android-build-and-signing.md).
+OpenVM intentionally does not generate, store, or use a code-signing certificate. Both Android build types explicitly clear their signing configuration. GitHub Actions builds reproducible unsigned APK/AAB artifacts, checks their QEMU contents and alignment, rejects JAR signatures, APK Signing Blocks, detached signatures, generated signing material, and symbolic-link escapes, validates AAB semantics with pinned `bundletool`, and publishes only post-verification staged packages plus checksums. Stock Android refuses to install an unsigned APK; this project does not supply the signing identity installation would require. See [Android build and unsigned release artifacts](docs/ci/android-build-and-signing.md).
 
 ## Security boundary
 

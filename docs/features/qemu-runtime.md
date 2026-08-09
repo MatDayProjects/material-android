@@ -41,8 +41,7 @@ into the app-private runtime directory and passed to QEMU with `-L`.
 `OpenVmApplication` intentionally performs no QEMU controller construction during Android
 application startup. `QemuRuntimeControllerStore` creates one controller per process only when
 the Activity requests it, and returns that same controller across Activity recreation. This keeps
-the production lifecycle behavior while allowing instrumentation to attach on slow software-only
-emulators before the QEMU stack is resolved.
+the production lifecycle behavior and avoids resolving the QEMU stack before the UI needs it.
 
 This boundary does not claim that a guest booted: it only makes controller construction available
 after the application and test process are alive. A real kernel/initrd/raw-image boot, serial
