@@ -112,7 +112,9 @@ jobs:
       - name: Download both native runtime ABIs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: openvm-qemu-runtime-*-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          # A failed-job rerun reuses artifacts from the successful attempt.
+          # Match the immutable run id and commit while allowing any attempt number.
+          pattern: openvm-qemu-runtime-*-${{ github.run_id }}-*-${{ github.sha }}
           path: native/qemu/runtime
           merge-multiple: true
 
