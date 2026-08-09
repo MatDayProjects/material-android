@@ -11,7 +11,8 @@
 - ✅ Add the process-backed QEMU lifecycle, private asset materialization, resource validation, and bounded serial diagnostics.
 - Add an isolated, reproducible QEMU native module from upstream source and package the correct host-ABI executable.
 - Define the guest image manifest and supported ARM64/x86_64 Android machine types.
-- Add a real guest display/console transport and host↔guest file-transfer boundary.
+- ✅ Add a private UNIX-socket VNC/RFB framebuffer transport boundary.
+- Add guest input, serial console presentation, host↔guest file-transfer, and image-manifest enforcement.
 - Ship only after a real Android guest boot is verified on documented hardware.
 
 ## 0.3.x · AVF adapter

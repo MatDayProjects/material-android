@@ -1,9 +1,10 @@
 # QEMU runtime adapter
 
 OpenVM now contains a process-backed QEMU adapter for profiles whose backend is
-`qemu`. It is deliberately headless in this milestone: the adapter proves the
-guest process lifecycle and serial output boundary, while the Android guest
-display transport and image packaging remain separate work.
+`qemu`. The adapter proves the guest process lifecycle and serial output boundary
+and can expose a framebuffer-only display over a private UNIX-domain VNC socket.
+It still requires a user-supplied runtime and bootable image; a running process is
+not treated as proof that Android has booted.
 
 ## Configuration
 
@@ -27,10 +28,14 @@ the profile's memory and vCPU limits and selects a portable TCG machine:
 - `x86_64`: `q35,accel=tcg`
 - `arm64-v8a`: `virt,accel=tcg`
 
-The guest image is attached as a raw virtio disk. The first runtime milestone uses
-`-display none`, `-serial stdio`, `-monitor none`, and `-no-reboot`, so the process
-and serial boundary are inspectable without pretending that a guest screen exists.
-The option meanings follow [QEMU's system-emulation documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html).
+The guest image is attached as a raw virtio disk. The command uses `-display none`,
+`-serial stdio`, `-monitor none`, and `-no-reboot`; when the profile is running it
+also adds `-vnc unix:<app-private-socket>`. The Android client accepts only RFB 3.8
+with the unauthenticated raw encoding, bounds framebuffer dimensions and rectangle
+counts, and never opens a TCP listener. It currently renders framebuffer updates;
+touch, keyboard, clipboard, and guest boot readiness remain separate work. The
+option meanings follow [QEMU's system-emulation documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html)
+and [QEMU's VNC security guidance](https://www.qemu.org/docs/master/system/vnc-security.html).
 
 ## Lifecycle and failure behavior
 
@@ -41,8 +46,10 @@ external path, and invalid profile resources all produce explicit error or stopp
 states. Output is retained only as a bounded tail for diagnostics.
 
 Stopping first sends a normal process destroy request and waits for a bounded period;
-it then forcefully destroys the process if it has not exited. A restart/import never
-restores a running state from profile JSON.
+it then forcefully destroys the process and verifies exit before recording `STOPPED`.
+A lingering process is reported as `ERROR` instead of becoming untracked. A pending
+preparation can be cancelled before process launch. A restart/import never restores
+a running state from profile JSON.
 
 ## Security boundary
 
@@ -50,7 +57,11 @@ Guest images execute code with the privileges available to the QEMU process. Ope
 does not grant a guest extra permissions, upload assets, or run a path outside its
 private runtime directory. Resource values are validated before command construction.
 The imported executable is not trusted merely because it has a friendly filename;
-its ELF header, readability, executability, location, and process result are checked.
+its ELF format/ABI preflight, readability, executability, location, and process
+result are checked. Asset names include a stable profile-ID hash to prevent sanitized
+name collisions, and replacement uses an atomic filesystem move so a failed copy
+does not delete the previous valid asset. The local display socket is private and
+is removed when the process exits.
 
 The Android Virtualization Framework remains a separate optional backend. Android's
 [VirtualizationService](https://source.android.com/docs/core/virtualization/virtualization-service)
@@ -60,9 +71,12 @@ because the device API level is new enough.
 ## Verification
 
 - `QemuRuntimeControllerTest` covers architecture-specific command construction,
-  unsupported architectures, private-path enforcement, and natural process exit.
+  private UNIX-display command construction, unsupported architectures, private-path
+  enforcement, cancellation before process start, and natural process exit.
+- `RfbClientTest` covers fragmented-safe protocol reads, raw ARGB framebuffer decoding,
+  unsupported encodings, and oversized framebuffer rejection.
 - `RuntimeAssetStoreTest` runs on the API 37 `Pixel_10_Pro_XL` emulator and verifies
-  copy, hash, size, and app-private placement.
+  copy, hash, size, app-private placement, and collision-resistant profile paths.
 - `MainActivitySmokeTest` runs on the same emulator and verifies the profile editor
   exposes backend selection and QEMU executable import.
 
@@ -71,7 +85,7 @@ on that emulator:
 
 ![OpenVM API 37 runtime backend surface](evidence/qemu-runtime-api37.png)
 
-The repository does not yet ship a QEMU binary or claim a verified Android guest boot.
-The next runtime milestone must build and package a reproducible QEMU target, define
-an Android guest image manifest, and add a real display/console transport before
-claiming VMOS-level feature parity.
+The repository does not yet ship a QEMU binary, guest-image manifest, input/console
+transport, or verified Android guest boot. The next runtime milestone must build and
+package a reproducible QEMU target, define the image contract, and verify a real
+Android guest before claiming VMOS-level feature parity.

@@ -28,6 +28,7 @@ data class RuntimeProcessSnapshot(
     val message: String,
     val exitCode: Int? = null,
     val outputTail: List<String> = emptyList(),
+    val displaySocketPath: String? = null,
 )
 
 fun interface ProcessStarter {
@@ -36,13 +37,14 @@ fun interface ProcessStarter {
 
 /** Builds a shell-free, deterministic QEMU command for a raw guest disk image. */
 class QemuCommandBuilder {
-    fun build(profile: VmProfile, executable: File, image: File): List<String> {
+    fun build(profile: VmProfile, executable: File, image: File, displaySocket: File? = null): List<String> {
         val machine = when (profile.architecture) {
             "x86_64" -> "q35,accel=tcg"
             "arm64-v8a" -> "virt,accel=tcg"
             else -> throw IllegalArgumentException("Unsupported guest architecture: ${profile.architecture}")
         }
-        return listOf(
+        return buildList {
+            addAll(listOf(
             executable.absolutePath,
             "-machine", machine,
             "-m", "${profile.memoryMb}M",
@@ -52,7 +54,9 @@ class QemuCommandBuilder {
             "-serial", "stdio",
             "-monitor", "none",
             "-no-reboot",
-        )
+            ))
+            if (displaySocket != null) addAll(listOf("-vnc", "unix:${displaySocket.absolutePath}"))
+        }
     }
 }
 
@@ -81,6 +85,7 @@ class QemuRuntimeController(
         val process: Process,
         val output: OutputTail,
         val listener: (RuntimeProcessSnapshot) -> Unit,
+        val displaySocket: File?,
     )
 
     private val running = ConcurrentHashMap<String, RunningProcess>()
@@ -90,6 +95,8 @@ class QemuRuntimeController(
         profile: VmProfile,
         executable: File,
         image: File,
+        displaySocket: File? = null,
+        shouldStart: () -> Boolean = { true },
         listener: (RuntimeProcessSnapshot) -> Unit = {},
     ): RuntimeProcessSnapshot {
         synchronized(running) {
@@ -107,7 +114,8 @@ class QemuRuntimeController(
             validateAsset(executable, "QEMU executable", mustExecute = true)
             validateElfExecutable(executable)
             validateAsset(image, "Guest image", mustExecute = false)
-            commandBuilder.build(profile, executable, image)
+            validateDisplaySocket(displaySocket)
+            commandBuilder.build(profile, executable, image, displaySocket)
         } catch (error: Throwable) {
             return fail(profile.id, error.message ?: "QEMU runtime validation failed", listener)
         }
@@ -117,6 +125,10 @@ class QemuRuntimeController(
             if (existing != null && isAlive(existing.process)) {
                 return RuntimeProcessSnapshot(profile.id, RuntimeProcessState.RUNNING, "QEMU is already running")
             }
+            if (!shouldStart()) {
+                displaySocket?.delete()
+                return cancel(profile.id, displaySocket, listener)
+            }
             if (existing != null) running.remove(profile.id)
             val process = try {
                 processStarter.start(command, trustedRoot)
@@ -124,14 +136,19 @@ class QemuRuntimeController(
                 return fail(profile.id, error.message ?: "QEMU could not be started", listener)
             }
             val output = OutputTail()
-            val record = RunningProcess(process, output, listener)
+            val record = RunningProcess(process, output, listener, displaySocket)
             running[profile.id] = record
             executor.execute { drainOutput(process, output) }
             if (!isAlive(process)) {
                 val exitCode = process.exitValueOrNull()
                 return finish(profile.id, record, exitCode, listener)
             }
-            val started = RuntimeProcessSnapshot(profile.id, RuntimeProcessState.RUNNING, "QEMU process started")
+            val started = RuntimeProcessSnapshot(
+                profile.id,
+                RuntimeProcessState.RUNNING,
+                "QEMU process started",
+                displaySocketPath = displaySocket?.absolutePath,
+            )
             snapshots[profile.id] = started
             listener(started)
             executor.execute { awaitExit(profile.id, record) }
@@ -146,9 +163,32 @@ class QemuRuntimeController(
         snapshots[profileId] = stopping
         record.listener(stopping)
         record.process.destroy()
-        if (!waitForExit(record.process, STOP_TIMEOUT_MILLIS)) record.process.destroyForcibly()
-        val stopped = RuntimeProcessSnapshot(profileId, RuntimeProcessState.STOPPED, "QEMU stopped", record.process.exitValueOrNull(), record.output.snapshot())
-        synchronized(running) { running.remove(profileId, record) }
+        var exited = waitForExit(record.process, STOP_TIMEOUT_MILLIS)
+        if (!exited) {
+            record.process.destroyForcibly()
+            exited = waitForExit(record.process, FORCE_STOP_TIMEOUT_MILLIS)
+        }
+        val stopped = if (exited) {
+            record.displaySocket?.delete()
+            RuntimeProcessSnapshot(
+                profileId,
+                RuntimeProcessState.STOPPED,
+                "QEMU stopped",
+                record.process.exitValueOrNull(),
+                record.output.snapshot(),
+                record.displaySocket?.absolutePath,
+            )
+        } else {
+            RuntimeProcessSnapshot(
+                profileId,
+                RuntimeProcessState.ERROR,
+                "QEMU did not exit after a forced stop",
+                record.process.exitValueOrNull(),
+                record.output.snapshot(),
+                record.displaySocket?.absolutePath,
+            )
+        }
+        if (exited) synchronized(running) { running.remove(profileId, record) }
         snapshots[profileId] = stopped
         record.listener(stopped)
         return stopped
@@ -177,7 +217,15 @@ class QemuRuntimeController(
     ): RuntimeProcessSnapshot {
         val state = if (exitCode == 0) RuntimeProcessState.STOPPED else RuntimeProcessState.ERROR
         val message = if (state == RuntimeProcessState.STOPPED) "QEMU exited" else "QEMU exited with code ${exitCode ?: "unknown"}"
-        val result = RuntimeProcessSnapshot(profileId, state, message, exitCode, record.output.snapshot())
+        record.displaySocket?.delete()
+        val result = RuntimeProcessSnapshot(
+            profileId,
+            state,
+            message,
+            exitCode,
+            record.output.snapshot(),
+            record.displaySocket?.absolutePath,
+        )
         synchronized(running) { running.remove(profileId, record) }
         snapshots[profileId] = result
         listener(result)
@@ -186,6 +234,18 @@ class QemuRuntimeController(
 
     private fun fail(profileId: String, message: String, listener: (RuntimeProcessSnapshot) -> Unit): RuntimeProcessSnapshot {
         val result = RuntimeProcessSnapshot(profileId, RuntimeProcessState.ERROR, message)
+        snapshots[profileId] = result
+        listener(result)
+        return result
+    }
+
+    private fun cancel(profileId: String, displaySocket: File?, listener: (RuntimeProcessSnapshot) -> Unit): RuntimeProcessSnapshot {
+        val result = RuntimeProcessSnapshot(
+            profileId,
+            RuntimeProcessState.STOPPED,
+            "QEMU start cancelled",
+            displaySocketPath = displaySocket?.absolutePath,
+        )
         snapshots[profileId] = result
         listener(result)
         return result
@@ -201,6 +261,18 @@ class QemuRuntimeController(
         }
         require(canonical.canRead()) { "$label is not readable" }
         if (mustExecute) require(canonical.canExecute() || File.separatorChar == '\\') { "$label is not executable" }
+    }
+
+    private fun validateDisplaySocket(socket: File?) {
+        if (socket == null) return
+        val canonicalRoot = trustedRoot.canonicalFile
+        val canonical = socket.canonicalFile
+        require(canonical.path.startsWith(canonicalRoot.path + File.separator)) {
+            "The guest display socket must be inside the app-private runtime directory"
+        }
+        require(!canonical.exists() || canonical.delete()) { "The stale guest display socket could not be removed" }
+        canonical.parentFile?.mkdirs()
+        require(canonical.parentFile?.isDirectory == true) { "The guest display socket directory could not be created" }
     }
 
     private fun validateElfExecutable(file: File) {
@@ -227,7 +299,32 @@ class QemuRuntimeController(
 
     private fun drainOutput(process: Process, output: OutputTail) {
         runCatching {
-            BufferedReader(InputStreamReader(process.inputStream)).useLines { lines -> lines.forEach(output::add) }
+            BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                val buffer = CharArray(4096)
+                val line = StringBuilder(MAX_OUTPUT_LINE_CHARS)
+                var truncated = false
+                fun flushLine() {
+                    val value = line.toString().removeSuffix("\r") + if (truncated) "… [truncated]" else ""
+                    output.add(value)
+                    line.setLength(0)
+                    truncated = false
+                }
+                while (true) {
+                    val count = reader.read(buffer)
+                    if (count < 0) break
+                    repeat(count) { index ->
+                        val character = buffer[index]
+                        if (character == '\n') {
+                            flushLine()
+                        } else if (line.length < MAX_OUTPUT_LINE_CHARS) {
+                            line.append(character)
+                        } else {
+                            truncated = true
+                        }
+                    }
+                }
+                if (line.isNotEmpty() || truncated) flushLine()
+            }
         }
     }
 
@@ -262,7 +359,9 @@ class QemuRuntimeController(
         const val RUNTIME_ASSET_DIRECTORY = "runtime-assets"
         private const val MAX_OUTPUT_LINES = 80
         private const val STOP_TIMEOUT_MILLIS = 3000L
+        private const val FORCE_STOP_TIMEOUT_MILLIS = 1000L
         private const val POLL_MILLIS = 50L
+        private const val MAX_OUTPUT_LINE_CHARS = 16_384
         private const val ELFCLASS64 = 2
         private const val ELFDATA2LSB = 1
         private val ELF_MAGIC = byteArrayOf(0x7f.toByte(), 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte())

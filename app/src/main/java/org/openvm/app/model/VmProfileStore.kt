@@ -60,6 +60,7 @@ class VmProfileStore(context: Context) {
             .map(VmProfile::restoredForHost)
             .filter { it.validationErrors().isEmpty() }
         require(valid.size == document.profiles.size) { "The configuration contains an invalid VM profile" }
+        require(valid.map { it.id }.toSet().size == valid.size) { "The configuration contains duplicate VM profile IDs" }
         persist((profilesFlow.value + valid).distinctBy { it.id }.sortedBy { it.createdAt })
         return valid.size
     }
@@ -67,7 +68,9 @@ class VmProfileStore(context: Context) {
     private fun load(): List<VmProfile> {
         val payload = preferences.getString(PROFILES_KEY, null) ?: return emptyList()
         return runCatching {
-            json.decodeFromString(VmProfileDocument.serializer(), payload).profiles.map(VmProfile::restoredForHost)
+            json.decodeFromString(VmProfileDocument.serializer(), payload).profiles
+                .map(VmProfile::restoredForHost)
+                .distinctBy { it.id }
         }.getOrDefault(emptyList())
     }
 

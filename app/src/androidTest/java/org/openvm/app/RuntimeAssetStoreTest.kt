@@ -30,4 +30,24 @@ class RuntimeAssetStoreTest {
             store.existingGuestImage("instrumentation-profile").delete()
         }
     }
+
+    @Test
+    fun profileIdsThatSanitizeToTheSameTextUseDifferentAssetPaths() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "openvm-collision-test.img").apply { writeBytes(byteArrayOf(7)) }
+        val store = RuntimeAssetStore(context)
+
+        try {
+            val first = store.materializeGuestImage("a/b", Uri.fromFile(source), 1024)
+            val second = store.materializeGuestImage("a?b", Uri.fromFile(source), 1024)
+
+            assertTrue(first.file != second.file)
+            assertTrue(first.file.isFile)
+            assertTrue(second.file.isFile)
+        } finally {
+            source.delete()
+            store.existingGuestImage("a/b").delete()
+            store.existingGuestImage("a?b").delete()
+        }
+    }
 }

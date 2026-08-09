@@ -45,7 +45,7 @@ class RuntimeBackendRegistry(private val context: Context) {
             } else {
                 BackendReadiness.NOT_CONFIGURED
             },
-            explanation = "QEMU is a process-backed open-source adapter. Import an Android-compatible QEMU executable and a bootable guest image; OpenVM copies both into app-private storage and never downloads a binary.",
+            explanation = "QEMU is a process-backed open-source adapter. This summary reports whether any executable is materialized; each profile is checked separately before start. OpenVM copies the selected executable and bootable guest image into app-private storage and never downloads a binary.",
         ),
     )
 

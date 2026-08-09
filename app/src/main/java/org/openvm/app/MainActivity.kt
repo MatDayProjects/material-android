@@ -2,6 +2,7 @@ package org.openvm.app
 
 import android.content.DialogInterface
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -15,6 +16,7 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -46,7 +48,9 @@ import org.openvm.app.model.VmStatus
 import org.openvm.app.settings.LanguageMode
 import org.openvm.app.settings.OpenVmSettings
 import org.openvm.app.settings.SettingsStore
+import org.openvm.app.runtime.RfbFramebuffer
 import org.openvm.app.runtime.RuntimeAssetStore
+import org.openvm.app.runtime.VncDisplayClient
 import org.openvm.app.ui.Copy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -82,6 +86,9 @@ class MainActivity : AppCompatActivity() {
     private var activeImageLabel: TextView? = null
     private var pendingQemuExecutableUri: String? = null
     private var activeQemuExecutableLabel: TextView? = null
+    private val displayClients = mutableMapOf<String, VncDisplayClient>()
+    private val displayViews = mutableMapOf<String, ImageView>()
+    private val pendingStarts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -146,6 +153,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        displayClients.values.forEach(VncDisplayClient::close)
+        displayClients.clear()
+        displayViews.clear()
         if (::qemuRuntimeController.isInitialized) qemuRuntimeController.close()
         super.onDestroy()
     }
@@ -305,6 +315,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderProfiles() {
         if (!::profileListContainer.isInitialized) return
+        displayViews.clear()
         profileListContainer.removeAllViews()
         val query = profileSearch?.text?.toString()?.trim().orEmpty()
         val regex = if (profileRegexEnabled && profileRegexPattern.isNotBlank()) parseRegex(profileRegexPattern, profileRegexFlags) else null
@@ -343,6 +354,15 @@ class MainActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
             setPadding(0, dp(2), 0, 0)
         })
+        if (profile.status == VmStatus.RUNNING) {
+            body.addView(ImageView(this).apply {
+                minimumHeight = dp(220)
+                setBackgroundColor(Color.BLACK)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = getString(R.string.guest_display, profile.name)
+                displayViews[profile.id] = this
+            }, fullWidthParams(top = 8, bottom = 4))
+        }
 
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, dp(8), 0, 0) }
         buttons.addView(MaterialButton(this).apply {
@@ -361,7 +381,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleRuntimeAction(profile: VmProfile) {
-        if (profile.status == VmStatus.RUNNING || profile.status == VmStatus.STARTING || profile.status == VmStatus.STOPPING) {
+        if (profile.status == VmStatus.STARTING && profile.backendId == "qemu" && pendingStarts.remove(profile.id)) {
+            profileStore.updateStatus(profile.id, VmStatus.STOPPED)
+            renderCurrentTab()
+            showMessage("QEMU start cancelled before the process launched")
+            return
+        }
+        if (profile.status == VmStatus.STARTING) {
+            showMessage("The selected runtime is still preparing")
+            return
+        }
+        if (profile.status == VmStatus.RUNNING || profile.status == VmStatus.STOPPING) {
             if (profile.backendId != "qemu") {
                 showMessage("Stop is waiting for the selected runtime adapter")
                 return
@@ -386,6 +416,7 @@ class MainActivity : AppCompatActivity() {
         profileStore.updateStatus(profile.id, VmStatus.STARTING)
         renderCurrentTab()
         showMessage("Validating guest image and starting QEMU")
+        pendingStarts.add(profile.id)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val image = runtimeAssetStore.materializeGuestImage(
@@ -393,17 +424,28 @@ class MainActivity : AppCompatActivity() {
                     Uri.parse(profile.imageUri),
                     profile.storageGb.toLong() * 1024L * 1024L * 1024L,
                 )
+                if (!pendingStarts.contains(profile.id)) return@launch
                 val executable = runtimeAssetStore.materializeQemuExecutable(profile.id, Uri.parse(profile.qemuExecutableUri))
-                val started = qemuRuntimeController.start(profile, executable.file, image.file) { snapshot ->
-                    runOnUiThread { applyRuntimeSnapshot(snapshot) }
-                }
+                if (!pendingStarts.contains(profile.id)) return@launch
+                val displaySocket = runtimeAssetStore.prepareDisplaySocket(profile.id)
+                val started = qemuRuntimeController.start(
+                    profile,
+                    executable.file,
+                    image.file,
+                    displaySocket,
+                    listener = { snapshot -> runOnUiThread { applyRuntimeSnapshot(snapshot) } },
+                    shouldStart = { pendingStarts.contains(profile.id) },
+                )
                 withContext(Dispatchers.Main) { applyRuntimeSnapshot(started) }
             } catch (error: Throwable) {
+                if (!pendingStarts.contains(profile.id)) return@launch
                 withContext(Dispatchers.Main) {
                     profileStore.updateStatus(profile.id, VmStatus.ERROR)
                     renderCurrentTab()
                     showError(error.message ?: "The guest runtime could not be prepared")
                 }
+            } finally {
+                pendingStarts.remove(profile.id)
             }
         }
     }
@@ -418,6 +460,11 @@ class MainActivity : AppCompatActivity() {
         }
         profileStore.updateStatus(snapshot.profileId, status)
         renderCurrentTab()
+        if (snapshot.state == RuntimeProcessState.RUNNING && snapshot.displaySocketPath != null) {
+            startDisplayClient(snapshot.profileId, snapshot.displaySocketPath)
+        } else if (snapshot.state == RuntimeProcessState.STOPPED || snapshot.state == RuntimeProcessState.ERROR) {
+            closeDisplayClient(snapshot.profileId)
+        }
         when (snapshot.state) {
             RuntimeProcessState.ERROR -> showError(
                 buildString {
@@ -429,6 +476,30 @@ class MainActivity : AppCompatActivity() {
             else -> Unit
         }
     }
+
+    private fun startDisplayClient(profileId: String, socketPath: String) {
+        if (displayClients.containsKey(profileId)) return
+        val client = VncDisplayClient(socketPath)
+        displayClients[profileId] = client
+        client.start(
+            onFrame = { frame ->
+                runOnUiThread { displayViews[profileId]?.setImageBitmap(frame.toBitmap()) }
+            },
+            onError = { message ->
+                runOnUiThread {
+                    if (profileStore.profiles.value.any { it.id == profileId && it.status == VmStatus.RUNNING }) {
+                        showError("Guest display unavailable: $message")
+                    }
+                }
+            },
+        )
+    }
+
+    private fun closeDisplayClient(profileId: String) {
+        displayClients.remove(profileId)?.close()
+    }
+
+    private fun RfbFramebuffer.toBitmap(): Bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
 
     private fun showProfileActions(profile: VmProfile) {
         MaterialAlertDialogBuilder(this)

@@ -2,7 +2,7 @@
 
 OpenVM is a local-first, open-source Android VM control plane inspired by the isolation and multi-instance workflow of VMOS. It is written from scratch and does not copy VMOS code, assets, branding, or private services.
 
-> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, materializes selected guest assets into app-private storage, starts a user-supplied QEMU executable through a validated process boundary, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. It does not yet bundle QEMU or claim a verified Android guest display/boot.
+> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, materializes selected guest assets into app-private storage, starts a user-supplied QEMU executable through a validated process boundary, exposes a private UNIX-socket framebuffer transport, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. It does not yet bundle QEMU or claim a verified Android guest boot, input, or console.
 
 ## Contents
 
@@ -22,6 +22,7 @@ OpenVM is a local-first, open-source Android VM control plane inspired by the is
 - Local append-only history for profile creation, editing, deletion, import, and export.
 - Multiple profile cards with truthful lifecycle states. QEMU starts only after an executable and bootable image are imported; AVF remains explicitly unavailable until its platform adapter is verified. There is no fake “running” state.
 - A process-backed QEMU adapter with ELF/path checks, bounded image and executable materialization, deterministic TCG command construction, serial output capture, stop timeouts, and explicit exit states.
+- A private UNIX-domain VNC/RFB framebuffer transport attached to running QEMU profiles; it is local-only and framebuffer-only, with no guest input or boot-readiness claim.
 - Backend readiness reporting for Android Virtualization Framework and QEMU asset configuration.
 - Profile/history search with an adjacent regex builder, bounded patterns, supported flags, live validation, and sample matching.
 - Settings for language mode (English, playful Hong Kong-style Cantonese, or bilingual), independent funny-level sliders, emoji decoration, display name, and dark theme.
@@ -41,7 +42,8 @@ Android UI
         └── QemuRuntimeController
               ├── app-private asset materialization
               ├── deterministic QEMU process lifecycle
-              └── bounded serial diagnostics
+              ├── bounded serial diagnostics
+              └── local UNIX-socket VNC framebuffer client
 ```
 
 The boundary is deliberate. Android's VirtualizationService manages crosvm guests, but access depends on device and platform capabilities. QEMU is therefore an explicit user-supplied open-source runtime in this milestone; a normal app must not claim full guest execution without a compatible executable, bootable image, display transport, permissions, and runtime verification.
@@ -69,7 +71,7 @@ The signing workflow builds the release APK/AAB outputs, signs them only inside 
 
 ## Security boundary
 
-OpenVM is local-first and has no account or telemetry service. Guest images can execute code, so importing an image is an explicit user action. The QEMU adapter enforces profile resource bounds, private asset paths, bounded copying, lifecycle cleanup, and explicit process errors; it does not grant the guest additional Android permissions.
+OpenVM is local-first and has no account or telemetry service. Guest images can execute code, so importing an image is an explicit user action. The QEMU adapter enforces profile resource bounds, collision-resistant private asset paths, bounded copying, lifecycle cleanup, and explicit process errors; its VNC framebuffer transport uses a private UNIX-domain socket and never opens a TCP listener. It does not grant the guest additional Android permissions.
 
 Do not open issues or pull requests containing private keystores, passwords, access tokens, or guest images. Report security issues through the process in [SECURITY.md](SECURITY.md).
 

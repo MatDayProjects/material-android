@@ -25,6 +25,16 @@ class QemuRuntimeControllerTest {
     }
 
     @Test
+    fun commandCanExposeOnlyAnAppPrivateUnixDisplaySocket() {
+        val profile = VmProfile(name = "display", architecture = "x86_64")
+        val socket = java.io.File("runtime", "display.sock")
+
+        val command = builder.build(profile, java.io.File("qemu-system-x86_64"), java.io.File("guest.img"), socket)
+
+        assertTrue(command.containsAll(listOf("-vnc", "unix:${socket.absolutePath}")))
+    }
+
+    @Test
     fun armCommandUsesVirtMachine() {
         val profile = VmProfile(name = "arm", architecture = "arm64-v8a")
 
@@ -93,6 +103,39 @@ class QemuRuntimeControllerTest {
         assertTrue(started.state == RuntimeProcessState.RUNNING || started.state == RuntimeProcessState.STOPPED)
         assertTrue(exited.await(5, TimeUnit.SECONDS))
         assertEquals(RuntimeProcessState.STOPPED, controller.snapshot(started.profileId).state)
+        controller.close()
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun cancelledStartDoesNotInvokeProcessStarter() {
+        val root = Files.createTempDirectory("openvm-runtime-cancel").toFile()
+        val executable = root.resolve("qemu-system").apply {
+            writeBytes(fakeX86Elf())
+            setExecutable(true)
+        }
+        val image = root.resolve("guest.img").apply { writeBytes(byteArrayOf(1)) }
+        val socket = root.resolve("display.sock")
+        var starterCalled = false
+        val controller = QemuRuntimeController(
+            trustedRoot = root,
+            processStarter = ProcessStarter { _, _ ->
+                starterCalled = true
+                error("Process must not start after cancellation")
+            },
+        )
+
+        val result = controller.start(
+            VmProfile(name = "cancel", backendId = "qemu"),
+            executable,
+            image,
+            socket,
+            shouldStart = { false },
+        )
+
+        assertEquals(RuntimeProcessState.STOPPED, result.state)
+        assertTrue(result.message.contains("cancel", ignoreCase = true))
+        assertTrue(!starterCalled)
         controller.close()
         root.deleteRecursively()
     }
