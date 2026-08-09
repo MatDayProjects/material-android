@@ -21,6 +21,11 @@
   through explicit QEMU arguments. Manifest bytes use strict UTF-8 and bounded JSON
   nesting; runtime assets use unique atomic staging files and are excluded from
   Android backup/transfer.
+- Commit [`af43751`](https://github.com/MatDayProjects/material-android/commit/af43751fb7b1ed162242e739a131c36f6b4706d9) completes this milestone's source,
+  tests, documentation, and API 37 evidence. The application-owned QEMU controller
+  survives Activity recreation; start generations prevent cancelled work from
+  resurrecting; RFB input rejects letterbox clicks, forwards modifier keys, and
+  bounds update pixels; failed display connections unregister themselves.
 - Added localizable language mode, independent funny levels, emoji toggle, display name, dark theme, regex search builder, and `Ctrl+Shift+F` command palette.
 - Added unit and instrumentation test coverage plus a protected GitHub Actions workflow
   that signs and verifies release APK/AAB artifacts from an encrypted environment.
@@ -34,6 +39,11 @@ The host toolchain was installed in an isolated user-scoped directory outside th
 - `./gradlew --no-daemon --no-scan connectedDebugAndroidTest` — passed on the installed `Pixel_10_Pro_XL` API 37 emulator: 4 instrumentation tests passed.
 - `./gradlew --no-daemon --no-scan testDebugUnitTest` — passed after the RFB, collision,
   and cancellation changes; the next integration run must repeat the API 37 emulator gate.
+- `./gradlew.bat testDebugUnitTest` — passed with strict manifest, kernel/initrd
+  integrity, nesting/UTF-8, closed-controller, RFB, and profile coverage.
+- `./gradlew.bat connectedDebugAndroidTest` — passed on `Pixel_10_Pro_XL` API 37:
+  4 instrumentation tests passed after the final build; the editor controls were
+  captured at the initial and scrolled positions.
 - `actionlint -shellcheck=` — passed structural workflow validation. The host does not have `shellcheck`, so the run-block shell content was not covered by that local actionlint invocation; hosted CI remains the shell verification gate.
 - `apksigner verify --verbose --print-certs` — passed for the debug APK.
 
