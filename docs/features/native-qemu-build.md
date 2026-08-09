@@ -36,7 +36,10 @@ APK honest and keeps the native capability visible in the backend readiness stat
 Run the workflow `.github/workflows/android-native-qemu.yml` on a push or with
 `workflow_dispatch`. The runtime build matrix creates one host-ABI output for
 `arm64-v8a` and one for `x86_64`; the packaging job combines both, builds the debug APK,
-and runs instrumentation on an API 35 x86_64 emulator.
+and runs instrumentation on an API 35 x86_64 emulator. The hosted smoke lane passes
+`-no-accel` so it remains usable on GitHub-hosted Linux machines that do not expose
+`/dev/kvm`; this is slower software VM execution, but it exercises the same packaged
+x86_64 Android runtime.
 
 ## Failure modes
 

@@ -187,7 +187,11 @@ jobs:
             fi
           }
           trap cleanup EXIT
-          emulator -avd "$avd_name" -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -port 5554 >"$emulator_log" 2>&1 &
+          # Hosted Linux runners may not expose /dev/kvm. Keep the x86_64 image so
+          # this lane exercises the packaged x86_64 runtime, but force the
+          # emulator's documented software VM path when hardware acceleration is
+          # unavailable.
+          emulator -avd "$avd_name" -no-accel -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -port 5554 >"$emulator_log" 2>&1 &
           emulator_pid=$!
           adb start-server
           booted=0
