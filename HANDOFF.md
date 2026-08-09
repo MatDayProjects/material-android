@@ -4,6 +4,10 @@
 
 ### Current state
 
+- Commit [`52300f7`](https://github.com/MatDayProjects/material-android/commit/52300f74319f74ebea6fc7fbf025b4644df22976)
+  contains the complete unsigned-artifact correction, verifier scripts, regression
+  tests, workflow staging/context gates, bundletool pin, and documentation. Hosted
+  replacement verification remains pending.
 - Final artifact inspection found that the Android Gradle Plugin's default debug
   configuration had signed `app-debug.apk` with an auto-generated `Android Debug`
   certificate. That artifact and the earlier debug-signed instrumentation runs are
