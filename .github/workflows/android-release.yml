@@ -242,7 +242,18 @@ jobs:
             exit 1
           fi
 
+          extract_apk_certificate_digest() {
+            sed -nE 's/^[[:space:]]*(V[0-9.]+ )?Signer( #[0-9]+)?(:)?[[:space:]]*certificate SHA-256 digest:[[:space:]]*//p' "$1" |
+              awk 'NF {print; exit}' |
+              tr -d '[:space:]:' |
+              tr '[:upper:]' '[:lower:]'
+          }
+
           chmod +x ./gradlew
+          OPENVM_RELEASE_KEYSTORE="$keystore_path" \
+          OPENVM_RELEASE_STORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD" \
+          OPENVM_RELEASE_KEY_ALIAS="$ANDROID_KEY_ALIAS" \
+          OPENVM_RELEASE_KEY_PASSWORD="$ANDROID_KEY_PASSWORD" \
           ./gradlew --no-daemon --no-scan --stacktrace \
             assembleRelease bundleRelease
 
@@ -282,12 +293,22 @@ jobs:
               exit 1
             fi
 
-            if ! "$APKSIGNER_PATH" sign \
-              --ks "$keystore_path" \
-              --ks-key-alias "$ANDROID_KEY_ALIAS" \
-              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
-              --key-pass env:ANDROID_KEY_PASSWORD \
-              --out "$destination" "$apk"; then
+            source_verifier_output="$(mktemp "${RUNNER_TEMP}/apksigner-source-output.XXXXXX")"
+            source_certificate_digest=""
+            if "$APKSIGNER_PATH" verify --verbose --print-certs \
+              "$apk" > "$source_verifier_output" 2>&1; then
+              source_certificate_digest="$(extract_apk_certificate_digest "$source_verifier_output")"
+            fi
+            rm -f -- "$source_verifier_output"
+
+            if [[ "$source_certificate_digest" == "$expected_certificate_digest" ]]; then
+              cp -- "$apk" "$destination"
+            elif ! "$APKSIGNER_PATH" sign \
+                --ks "$keystore_path" \
+                --ks-key-alias "$ANDROID_KEY_ALIAS" \
+                --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+                --key-pass env:ANDROID_KEY_PASSWORD \
+                --out "$destination" "$apk"; then
               echo "apksigner could not sign release APK: ${apk#./}" >&2
               exit 1
             fi
@@ -300,13 +321,7 @@ jobs:
               exit 1
             fi
 
-            actual_certificate_digest="$(
-              sed -nE 's/^[[:space:]]*(V[0-9.]+ )?Signer( #[0-9]+)?(:)?[[:space:]]*certificate SHA-256 digest:[[:space:]]*//p' \
-                "$verifier_output" |
-                awk 'NF {print; exit}' |
-                tr -d '[:space:]:' |
-                tr '[:upper:]' '[:lower:]'
-            )"
+            actual_certificate_digest="$(extract_apk_certificate_digest "$verifier_output")"
             rm -f -- "$verifier_output"
             if [[ -z "$actual_certificate_digest" ]]; then
               echo "apksigner did not report a certificate SHA-256 digest: $artifact_name" >&2

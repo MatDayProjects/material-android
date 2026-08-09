@@ -10,7 +10,7 @@ provided to one signing step.
 | Workflow | Trigger | Build and verification | Secret access | Uploaded evidence |
 | --- | --- | --- | --- | --- |
 | `.github/workflows/android-ci.yml` | Pull request, every push, or manual dispatch | `testDebugUnitTest`, `assembleDebug`, and `apksigner verify` for every debug APK | None | Debug APKs and safe test/report files for 14 days |
-| `.github/workflows/android-release.yml` | `v*` tag push, or manual dispatch with `release=true` | Debug validation first, then `assembleRelease`, `bundleRelease`, Actions-side signing, `apksigner verify` for every release APK, and `jarsigner -verify` for every release AAB | Only the `android-release` environment's four signing secrets | Signed APKs/AABs, verification results, and SHA-256 checksums for 30 days |
+| `.github/workflows/android-release.yml` | `v*` tag push, or manual dispatch with `release=true` | Debug validation first, then Gradle signing from the protected CI environment, fallback `apksigner` signing only when an APK is not already signed by the configured certificate, and certificate verification for every APK/AAB | Only the `android-release` environment's four signing secrets | Signed APKs/AABs, verification results, and SHA-256 checksums for 30 days |
 
 Android builds use `ubuntu-24.04`; the Windows-only product scope does not apply to
 this Android lane. The validation workflow cancels obsolete push runs. The release
@@ -31,10 +31,13 @@ and provide these tasks:
 ./gradlew assembleRelease bundleRelease
 ```
 
-The release variant only needs to produce its normal APK and AAB outputs. The release
-workflow signs those outputs after Gradle completes, so no signing block or signing
-secret is required in `app/build.gradle.kts`. This keeps signing entirely inside the
-protected CI step and avoids changing application source files for CI credentials.
+The release variant is unsigned during ordinary local development. In the protected
+release job, the workflow exposes the decoded keystore through four short-lived
+environment variables and Gradle attaches the `ciRelease` signing config to both the
+APK and AAB release outputs. The build script rejects a partial CI signing environment,
+and no secret or keystore path is committed. The workflow still verifies every output
+and can sign an APK with `apksigner` if a future Android Gradle Plugin emits an unsigned
+or differently signed APK.
 
 The signing step reads the following values:
 
@@ -44,6 +47,15 @@ The signing step reads the following values:
 | `ANDROID_KEYSTORE_PASSWORD` | Keystore password | Yes; GitHub Actions secret |
 | `ANDROID_KEY_ALIAS` | Signing key alias | Yes; GitHub Actions secret |
 | `ANDROID_KEY_PASSWORD` | Signing key password | Yes; GitHub Actions secret |
+
+The workflow maps those secrets only inside the signing job:
+
+| Gradle environment variable | Source |
+| --- | --- |
+| `OPENVM_RELEASE_KEYSTORE` | Temporary decoded keystore path |
+| `OPENVM_RELEASE_STORE_PASSWORD` | `ANDROID_KEYSTORE_PASSWORD` |
+| `OPENVM_RELEASE_KEY_ALIAS` | `ANDROID_KEY_ALIAS` |
+| `OPENVM_RELEASE_KEY_PASSWORD` | `ANDROID_KEY_PASSWORD` |
 
 The workflow passes passwords to `apksigner` and `jarsigner` through environment-based
 password arguments, never as literal command-line values.
@@ -99,14 +111,16 @@ The workflow performs the following checks before and after the Gradle build:
 2. It decodes the keystore into a temporary file with restrictive permissions.
 3. It validates the keystore password and alias with `keytool` without emitting the
    command output.
-4. It signs each release APK with `apksigner` and each release AAB with `jarsigner`,
-   using only the decoded keystore and the protected secret values.
-5. It requires both a release APK and a release AAB before signing.
-6. It verifies every signed release APK with `apksigner` and compares its certificate digest
+4. It passes the temporary keystore and protected values to Gradle so the release APK
+   and AAB are signed by the configured certificate.
+5. It signs an APK with `apksigner` only when its source digest is not already the
+   configured certificate, then verifies the result.
+6. It requires both a release APK and a release AAB before publishing evidence.
+7. It verifies every signed release APK with `apksigner` and compares its certificate digest
    with the configured keystore alias.
-7. It verifies every signed release AAB with `jarsigner -verify` and compares its
+8. It verifies every signed release AAB with `jarsigner -verify` and compares its
    certificate digest with the configured keystore alias.
-8. It copies only signed, verified APKs/AABs, a verification summary, and a checksum file to
+9. It copies only signed, verified APKs/AABs, a verification summary, and a checksum file to
    the upload directory. The temporary keystore is deleted when the signing step ends.
 
 No private key, keystore, certificate file, password, or encoded keystore belongs in

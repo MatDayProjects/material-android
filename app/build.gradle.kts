@@ -4,6 +4,21 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val ciReleaseKeystorePath = providers.environmentVariable("OPENVM_RELEASE_KEYSTORE").orNull
+val ciReleaseStorePassword = providers.environmentVariable("OPENVM_RELEASE_STORE_PASSWORD").orNull
+val ciReleaseKeyAlias = providers.environmentVariable("OPENVM_RELEASE_KEY_ALIAS").orNull
+val ciReleaseKeyPassword = providers.environmentVariable("OPENVM_RELEASE_KEY_PASSWORD").orNull
+val ciReleaseSigningValues = listOf(
+    ciReleaseKeystorePath,
+    ciReleaseStorePassword,
+    ciReleaseKeyAlias,
+    ciReleaseKeyPassword,
+)
+val ciReleaseSigningConfigured = ciReleaseSigningValues.all { it != null }
+if (ciReleaseSigningValues.any { it != null } && !ciReleaseSigningConfigured) {
+    error("CI release signing requires OPENVM_RELEASE_KEYSTORE, OPENVM_RELEASE_STORE_PASSWORD, OPENVM_RELEASE_KEY_ALIAS, and OPENVM_RELEASE_KEY_PASSWORD together.")
+}
+
 android {
     namespace = "org.openvm.app"
     compileSdk = 35
@@ -19,6 +34,18 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        if (ciReleaseSigningConfigured) {
+            create("ciRelease") {
+                storeFile = file(ciReleaseKeystorePath!!)
+                storePassword = ciReleaseStorePassword
+                keyAlias = ciReleaseKeyAlias
+                keyPassword = ciReleaseKeyPassword
+                storeType = "PKCS12"
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -30,6 +57,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (ciReleaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("ciRelease")
+            }
         }
     }
 
