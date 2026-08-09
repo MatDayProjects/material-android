@@ -169,6 +169,16 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           script: |
+            for attempt in $(seq 1 60); do
+              if adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "Android package service did not become ready after 120 seconds" >&2
+                exit 1
+              fi
+              sleep 2
+            done
             ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest connectedDebugAndroidTest
             ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
 
