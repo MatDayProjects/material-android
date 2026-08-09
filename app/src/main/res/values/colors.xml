@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="openvm_primary">#4F5DFF</color>
+    <color name="openvm_on_primary">#FFFFFF</color>
+    <color name="openvm_secondary">#5D5E72</color>
+    <color name="openvm_surface">#F9F9FF</color>
+    <color name="openvm_surface_variant">#E3E2EC</color>
+    <color name="openvm_on_surface">#1A1B20</color>
+</resources>
+

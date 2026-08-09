@@ -1,0 +1,377 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Build and sign a release APK and AAB using the android-release environment
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Release work is not cancelled by a later push. A partially cancelled release can leave
+# an immutable tag without its corresponding evidence.
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  debug-build:
+    name: Validate debug APK before release
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release == true
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v2
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+
+      - name: Ensure apksigner is available
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "Android SDK root was not provided by setup-android." >&2
+            exit 1
+          fi
+
+          mapfile -t apksigners < <(
+            find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
+          )
+          if (( ${#apksigners[@]} == 0 )); then
+            sdkmanager "build-tools;35.0.0" >/dev/null
+            mapfile -t apksigners < <(
+              find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
+            )
+          fi
+
+          if (( ${#apksigners[@]} == 0 )); then
+            echo "No Android build-tools installation provides apksigner." >&2
+            exit 1
+          fi
+
+          apksigner_path="${apksigners[${#apksigners[@]}-1]}"
+          echo "APKSIGNER_PATH=$apksigner_path" >> "$GITHUB_ENV"
+
+      - name: Build and verify debug APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+
+          ./gradlew --no-daemon --no-scan --stacktrace \
+            testDebugUnitTest assembleDebug
+
+          mapfile -d '' debug_apks < <(
+            find . -type f -path '*/build/outputs/apk/debug/*.apk' -print0
+          )
+          if (( ${#debug_apks[@]} == 0 )); then
+            echo "Gradle completed without producing a debug APK." >&2
+            exit 1
+          fi
+
+          for apk in "${debug_apks[@]}"; do
+            "$APKSIGNER_PATH" verify --verbose "$apk" >/dev/null
+            echo "Verified debug APK: ${apk#./}"
+          done
+
+      - name: Upload safe pre-release evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-debug-evidence-${{ github.run_id }}
+          path: |
+            **/build/outputs/apk/debug/*.apk
+            **/build/test-results/**/*.xml
+            **/build/reports/tests/**/*.html
+            **/build/reports/lint-results-*.html
+          if-no-files-found: warn
+          retention-days: 14
+
+  signed-release:
+    name: Build and verify signed release artifacts
+    needs: debug-build
+    if: >-
+      needs.debug-build.result == 'success' &&
+      (github.event_name == 'push' || inputs.release == true)
+    runs-on: ubuntu-24.04
+    environment:
+      name: android-release
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v2
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+
+      - name: Ensure apksigner is available
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "Android SDK root was not provided by setup-android." >&2
+            exit 1
+          fi
+
+          mapfile -t apksigners < <(
+            find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
+          )
+          if (( ${#apksigners[@]} == 0 )); then
+            sdkmanager "build-tools;35.0.0" >/dev/null
+            mapfile -t apksigners < <(
+              find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
+            )
+          fi
+
+          if (( ${#apksigners[@]} == 0 )); then
+            echo "No Android build-tools installation provides apksigner." >&2
+            exit 1
+          fi
+
+          apksigner_path="${apksigners[${#apksigners[@]}-1]}"
+          echo "APKSIGNER_PATH=$apksigner_path" >> "$GITHUB_ENV"
+
+      - name: Build and verify signed APK and AAB
+        id: release
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          required_secret_names=(
+            ANDROID_KEYSTORE_BASE64
+            ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD
+          )
+          missing_secret_names=()
+          for secret_name in "${required_secret_names[@]}"; do
+            if [[ -z "${!secret_name:-}" ]]; then
+              missing_secret_names+=("$secret_name")
+            fi
+          done
+          if (( ${#missing_secret_names[@]} != 0 )); then
+            printf 'Missing required GitHub Actions secret: %s\n' "${missing_secret_names[@]}" >&2
+            exit 1
+          fi
+
+          signing_dir="$(mktemp -d "${RUNNER_TEMP}/android-signing.XXXXXX")"
+          artifact_dir="${RUNNER_TEMP}/android-release-artifacts"
+          mkdir -p "$artifact_dir"
+          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
+          trap 'rm -rf -- "$signing_dir"' EXIT
+
+          keystore_path="$signing_dir/release.keystore"
+          if ! printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"; then
+            echo "ANDROID_KEYSTORE_BASE64 could not be decoded." >&2
+            exit 1
+          fi
+          chmod 600 "$keystore_path"
+          if [[ ! -s "$keystore_path" ]]; then
+            echo "The decoded Android keystore is empty." >&2
+            exit 1
+          fi
+
+          if ! keytool -list -v \
+            -keystore "$keystore_path" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "The Android keystore, store password, or key alias could not be validated." >&2
+            exit 1
+          fi
+
+          expected_certificate_digest="$(
+            keytool -list -v \
+              -keystore "$keystore_path" \
+              -storepass:env ANDROID_KEYSTORE_PASSWORD \
+              -alias "$ANDROID_KEY_ALIAS" 2>/dev/null |
+              awk -F': ' '/SHA256:/{gsub(/:/, "", $2); gsub(/[[:space:]]/, "", $2); print tolower($2); exit}'
+          )"
+          if [[ -z "$expected_certificate_digest" ]]; then
+            echo "The signing certificate SHA-256 digest could not be read from the keystore." >&2
+            exit 1
+          fi
+
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --no-scan --stacktrace \
+            assembleRelease bundleRelease
+
+          mapfile -d '' unsigned_release_apks < <(
+            find . -type f -path '*/build/outputs/apk/release/*.apk' \
+              -name '*unsigned*.apk' -print0
+          )
+          if (( ${#unsigned_release_apks[@]} != 0 )); then
+            release_apks=("${unsigned_release_apks[@]}")
+          else
+            mapfile -d '' release_apks < <(
+              find . -type f -path '*/build/outputs/apk/release/*.apk' \
+                ! -name '*unaligned*.apk' -print0
+            )
+          fi
+          mapfile -d '' release_aabs < <(
+            find . -type f -path '*/build/outputs/bundle/release/*.aab' -print0
+          )
+          if (( ${#release_apks[@]} == 0 )); then
+            echo "Gradle completed without producing a release APK." >&2
+            exit 1
+          fi
+          if (( ${#release_aabs[@]} == 0 )); then
+            echo "Gradle completed without producing a release AAB." >&2
+            exit 1
+          fi
+
+          verification_file="$artifact_dir/verification.txt"
+          : > "$verification_file"
+
+          for apk in "${release_apks[@]}"; do
+            artifact_name="$(basename "$apk")"
+            artifact_name="${artifact_name/-unsigned/}"
+            destination="$artifact_dir/$artifact_name"
+            if [[ -e "$destination" ]]; then
+              echo "Release artifact name collision: $artifact_name" >&2
+              exit 1
+            fi
+
+            if ! "$APKSIGNER_PATH" sign \
+              --ks "$keystore_path" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "$destination" "$apk" >/dev/null 2>&1; then
+              echo "apksigner could not sign release APK: ${apk#./}" >&2
+              exit 1
+            fi
+
+            verifier_output="$(mktemp "${RUNNER_TEMP}/apksigner-output.XXXXXX")"
+            if ! "$APKSIGNER_PATH" verify --verbose --print-certs \
+              "$destination" > "$verifier_output" 2>&1; then
+              rm -f -- "$verifier_output"
+              echo "apksigner rejected signed release APK: $artifact_name" >&2
+              exit 1
+            fi
+
+            actual_certificate_digests="$(
+              awk -F': ' '/certificate SHA-256 digest:/{gsub(/:/, "", $2); gsub(/[[:space:]]/, "", $2); print tolower($2)}' \
+                "$verifier_output"
+            )"
+            rm -f -- "$verifier_output"
+            if ! grep -Fqx "$expected_certificate_digest" <<< "$actual_certificate_digests"; then
+              echo "Signed release APK certificate does not match the configured signing alias: $artifact_name" >&2
+              exit 1
+            fi
+
+            printf 'Signed and verified APK: %s\n' "$artifact_name" >> "$verification_file"
+          done
+
+          for aab in "${release_aabs[@]}"; do
+            artifact_name="$(basename "$aab")"
+            destination="$artifact_dir/$artifact_name"
+            if [[ -e "$destination" ]]; then
+              echo "Release artifact name collision: $artifact_name" >&2
+              exit 1
+            fi
+            cp -- "$aab" "$destination"
+
+            if ! jarsigner -verify "$destination" >/dev/null 2>&1; then
+              if ! jarsigner \
+                -keystore "$keystore_path" \
+                -storepass:env ANDROID_KEYSTORE_PASSWORD \
+                -keypass:env ANDROID_KEY_PASSWORD \
+                "$destination" "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+                echo "jarsigner could not sign release AAB: $artifact_name" >&2
+                exit 1
+              fi
+            fi
+
+            if ! jarsigner -verify "$destination" >/dev/null 2>&1; then
+              echo "jarsigner rejected signed release AAB: $artifact_name" >&2
+              exit 1
+            fi
+
+            actual_aab_certificate_digest="$(
+              keytool -printcert -jarfile "$destination" 2>/dev/null |
+              awk -F': ' '/SHA256:/{gsub(/:/, "", $2); gsub(/[[:space:]]/, "", $2); print tolower($2); exit}'
+            )"
+            if [[ "$actual_aab_certificate_digest" != "$expected_certificate_digest" ]]; then
+              echo "Signed release AAB certificate does not match the configured signing alias: $artifact_name" >&2
+              exit 1
+            fi
+            printf 'Signed and verified AAB: %s\n' "$artifact_name" >> "$verification_file"
+          done
+
+          (
+            cd "$artifact_dir"
+            sha256sum -- *.apk *.aab > SHA256SUMS.txt
+          )
+
+      - name: Upload safe signed release evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-evidence-${{ github.run_id }}
+          path: ${{ steps.release.outputs.artifact_dir }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  release-not-requested:
+    name: Release not requested
+    if: github.event_name == 'workflow_dispatch' && inputs.release != true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Explain the no-op dispatch
+        run: echo "No release was requested. Dispatch again with release=true to use the android-release environment."

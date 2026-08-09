@@ -1,0 +1,107 @@
+name: Android CI
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug-build:
+    name: Validate debug APK
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v2
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+
+      - name: Ensure apksigner is available
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "Android SDK root was not provided by setup-android." >&2
+            exit 1
+          fi
+
+          mapfile -t apksigners < <(
+            find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
+          )
+          if (( ${#apksigners[@]} == 0 )); then
+            sdkmanager "build-tools;35.0.0" >/dev/null
+            mapfile -t apksigners < <(
+              find "$sdk_root/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V
+            )
+          fi
+
+          if (( ${#apksigners[@]} == 0 )); then
+            echo "No Android build-tools installation provides apksigner." >&2
+            exit 1
+          fi
+
+          apksigner_path="${apksigners[${#apksigners[@]}-1]}"
+          echo "APKSIGNER_PATH=$apksigner_path" >> "$GITHUB_ENV"
+
+      - name: Build and verify debug APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+
+          ./gradlew --no-daemon --no-scan --stacktrace \
+            testDebugUnitTest assembleDebug
+
+          mapfile -d '' debug_apks < <(
+            find . -type f -path '*/build/outputs/apk/debug/*.apk' -print0
+          )
+          if (( ${#debug_apks[@]} == 0 )); then
+            echo "Gradle completed without producing a debug APK." >&2
+            exit 1
+          fi
+
+          for apk in "${debug_apks[@]}"; do
+            "$APKSIGNER_PATH" verify --verbose "$apk" >/dev/null
+            echo "Verified debug APK: ${apk#./}"
+          done
+
+      - name: Upload safe debug evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-evidence-${{ github.run_id }}
+          path: |
+            **/build/outputs/apk/debug/*.apk
+            **/build/test-results/**/*.xml
+            **/build/reports/tests/**/*.html
+            **/build/reports/lint-results-*.html
+          if-no-files-found: warn
+          retention-days: 14
