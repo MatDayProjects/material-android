@@ -32,6 +32,7 @@
     <string name="qemu_executable">QEMU executable</string>
     <string name="qemu_executable_none">No QEMU executable imported</string>
     <string name="qemu_executable_selected">QEMU executable selected: %1$s</string>
+    <string name="qemu_executable_bundled">Bundled QEMU runtime available for this device</string>
     <string name="action_import_qemu">Import QEMU executable</string>
     <string name="guest_display">Guest display for %1$s</string>
     <string name="guest_display_focus">Guest display focused. Touch or use a hardware keyboard to send input.</string>

@@ -9,7 +9,7 @@
 ## 0.2.x · Native QEMU adapter
 
 - ✅ Add the process-backed QEMU lifecycle, private asset materialization, resource validation, and bounded serial diagnostics.
-- Add an isolated, reproducible QEMU native module from upstream source and package the correct host-ABI executable.
+- 🏃 Add and verify the isolated, reproducible QEMU native module from pinned upstream source, including the correct host-ABI executable and Android packaging path.
 - ✅ Define and enforce the version-1 guest-image manifest, raw-image integrity metadata, and supported ARM64/x86_64 Android machine types.
 - ✅ Add a private UNIX-socket VNC/RFB framebuffer transport boundary.
 - ✅ Add bounded guest touch/key input over the private RFB channel.

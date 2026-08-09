@@ -1,5 +1,52 @@
 # Handoff
 
+## 2026-08-09 · Native QEMU build and packaging lane
+
+### Completed in this lane
+
+- Added `native/qemu/qemu-build.json`, pinning QEMU 11.0.3, its official archive
+  SHA-256, the Termux Android package-tree commit, the QEMU recipe, the immutable
+  Termux package-builder image digest, and all 20 Android patch SHA-256 values.
+- Added the disposable Linux/Docker build path in `native/qemu/build-android.sh` and
+  `native/qemu/collect-runtime.sh`. It verifies every source and patch digest, builds
+  through the open Termux recipe, compares the complete patch set, validates Android
+  ELF loader/machine/16 KiB alignment, collects only the transitive runtime closure and
+  bounded QEMU data files, and records builder/recipe/patch provenance.
+- Added generated Gradle packaging through `OPENVM_QEMU_RUNTIME_DIR`. Packaged QEMU
+  executables live in Android `nativeLibraryDir`; the app searches their adjacent
+  libraries and extracts optional data into app-private storage. Source-only APKs keep
+  the user-imported executable route.
+- Added native runtime discovery, QEMU `-L` data-directory construction, host-ABI
+  validation, and an instrumentation smoke test for QEMU `--version` and
+  `-machine help`.
+- Added the native workflow and its hand-written dependency inventory. It builds both
+  host ABIs, packages the APK, validates all four host/guest library combinations and
+  both data roots, pins every action by commit SHA, and runs the production controller
+  smoke test with a required-runtime flag. The release workflow consumes the same
+  generated runtime before building APK/AAB artifacts.
+
+### Local verification
+
+- `./gradlew.bat testDebugUnitTest assembleDebug` — passed with JDK 21 and Android SDK
+  platform 35; 43 unit tests ran successfully with zero failures/errors.
+- `./gradlew.bat connectedDebugAndroidTest` — passed on `Pixel_10_Pro_XL` API 37;
+  6 instrumentation tests were recorded with zero failures/errors; 4 executed and 2
+  native-runtime tests were expected source-only skips.
+- `bash -n native/qemu/build-android.sh native/qemu/collect-runtime.sh` and ShellCheck
+  — passed through Git for Windows Bash with the isolated tool binaries.
+- `native/qemu/build-android.sh --verify-only` — passed locally; the JSON, immutable
+  builder-image, Android packaging contract, patch count, path safety, and duplicate
+  checks all validated.
+- The hosted native build and Android-target QEMU smoke test have not run yet. A real
+  Android guest boot is still unverified.
+
+### Next owner
+
+Review the first hosted native workflow run, inspect the built runtime's actual dynamic
+loader/ABI behavior, and only then prepare a documented bootable Android guest image
+for the separate guest-boot harness. Do not interpret QEMU probes or a running process
+as Android guest readiness.
+
 ## 2026-08-09 · OpenVM bootstrap and protected signing
 
 ### Completed

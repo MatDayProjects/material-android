@@ -49,6 +49,7 @@ class QemuCommandBuilder {
         image: File,
         displaySocket: File? = null,
         bootArtifacts: GuestBootArtifacts? = null,
+        qemuDataDirectory: File? = null,
     ): List<String> {
         val machine = when (profile.architecture) {
             "x86_64" -> "q35,accel=tcg"
@@ -67,6 +68,7 @@ class QemuCommandBuilder {
             "-monitor", "none",
             "-no-reboot",
             ))
+            if (qemuDataDirectory != null) addAll(listOf("-L", qemuDataDirectory.absolutePath))
             if (bootArtifacts != null) {
                 addAll(listOf("-kernel", bootArtifacts.kernel.absolutePath, "-initrd", bootArtifacts.initrd.absolutePath))
                 if (!bootArtifacts.kernelCommandLine.isNullOrBlank()) {
@@ -86,18 +88,21 @@ class QemuRuntimeController(
     private val trustedRoot: File,
     private val commandBuilder: QemuCommandBuilder = QemuCommandBuilder(),
     private val supportedHostMachines: Set<Int> = emptySet(),
-    private val processStarter: ProcessStarter = ProcessStarter { command, workingDirectory ->
-        ProcessBuilder(command)
-            .directory(workingDirectory)
-            .redirectErrorStream(true)
-            .start()
-    },
+    private val processStarter: ProcessStarter? = null,
     private val executor: ExecutorService = Executors.newCachedThreadPool(),
+    private val trustedExecutableRoots: Set<File> = emptySet(),
+    private val runtimeLibraryDirectory: File? = null,
 ) : AutoCloseable {
     constructor(
         context: Context,
         commandBuilder: QemuCommandBuilder = QemuCommandBuilder(),
-    ) : this(File(context.filesDir, RUNTIME_ASSET_DIRECTORY), commandBuilder, supportedHostMachines())
+    ) : this(
+        trustedRoot = File(context.filesDir, RUNTIME_ASSET_DIRECTORY),
+        commandBuilder = commandBuilder,
+        supportedHostMachines = supportedHostMachines(),
+        trustedExecutableRoots = setOf(File(context.applicationInfo.nativeLibraryDir)),
+        runtimeLibraryDirectory = File(context.applicationInfo.nativeLibraryDir),
+    )
 
     private data class RunningProcess(
         val process: Process,
@@ -116,6 +121,7 @@ class QemuRuntimeController(
         image: File,
         displaySocket: File? = null,
         bootArtifacts: GuestBootArtifacts? = null,
+        qemuDataDirectory: File? = null,
         shouldStart: () -> Boolean = { true },
         listener: (RuntimeProcessSnapshot) -> Unit = {},
     ): RuntimeProcessSnapshot {
@@ -134,9 +140,10 @@ class QemuRuntimeController(
         val command = try {
             require(profile.backendId == "qemu") { "The selected profile is not configured for QEMU" }
             require(profile.validationErrors().isEmpty()) { "The VM profile is invalid: ${profile.validationErrors().joinToString("; ")}" }
-            validateAsset(executable, "QEMU executable", mustExecute = true)
+            validateAsset(executable, "QEMU executable", mustExecute = true, extraRoots = trustedExecutableRoots)
             validateElfExecutable(executable)
             validateAsset(image, "Guest image", mustExecute = false)
+            validateDirectory(qemuDataDirectory, "QEMU data directory")
             if (bootArtifacts != null) {
                 validateAsset(bootArtifacts.kernel, "Guest kernel", mustExecute = false)
                 validateAsset(bootArtifacts.initrd, "Guest initrd", mustExecute = false)
@@ -145,7 +152,7 @@ class QemuRuntimeController(
                 }
             }
             validateDisplaySocket(displaySocket)
-            commandBuilder.build(profile, executable, image, displaySocket, bootArtifacts)
+            commandBuilder.build(profile, executable, image, displaySocket, bootArtifacts, qemuDataDirectory)
         } catch (error: Throwable) {
             return fail(profile.id, error.message ?: "QEMU runtime validation failed", listener)
         }
@@ -161,7 +168,7 @@ class QemuRuntimeController(
             }
             if (existing != null) running.remove(profile.id)
             val process = try {
-                processStarter.start(command, trustedRoot)
+                startProcess(command)
             } catch (error: Throwable) {
                 return fail(profile.id, error.message ?: "QEMU could not be started", listener)
             }
@@ -285,16 +292,43 @@ class QemuRuntimeController(
         return result
     }
 
-    private fun validateAsset(file: File, label: String, mustExecute: Boolean) {
+    private fun startProcess(command: List<String>): Process {
+        val starter = processStarter
+        if (starter != null) return starter.start(command, trustedRoot)
+        return ProcessBuilder(command).apply {
+            directory(trustedRoot)
+            runtimeLibraryDirectory?.let { libraryDirectory ->
+                val existing = environment()["LD_LIBRARY_PATH"]
+                environment()["LD_LIBRARY_PATH"] = listOf(
+                    libraryDirectory.absolutePath,
+                    File(trustedRoot, "lib").absolutePath,
+                    existing,
+                ).filterNot { it.isNullOrBlank() }.joinToString(File.pathSeparator)
+            }
+            redirectErrorStream(true)
+        }.start()
+    }
+
+    private fun validateAsset(file: File, label: String, mustExecute: Boolean, extraRoots: Set<File> = emptySet()) {
         val canonicalRoot = trustedRoot.canonicalFile
         val canonical = file.canonicalFile
         require(canonical.exists() && canonical.isFile) { "$label is missing" }
         require(canonical.length() > 0L) { "$label is empty" }
-        require(canonical.path == canonicalRoot.path || canonical.path.startsWith(canonicalRoot.path + File.separator)) {
-            "$label must be inside the app-private runtime directory"
+        val roots = setOf(canonicalRoot) + extraRoots.map { it.canonicalFile }
+        require(roots.any { root -> canonical.path == root.path || canonical.path.startsWith(root.path + File.separator) }) {
+            "$label must be inside the app-private runtime directory or the verified native-library directory"
         }
         require(canonical.canRead()) { "$label is not readable" }
         if (mustExecute) require(canonical.canExecute() || File.separatorChar == '\\') { "$label is not executable" }
+    }
+
+    private fun validateDirectory(directory: File?, label: String) {
+        if (directory == null) return
+        val canonicalRoot = trustedRoot.canonicalFile
+        val canonical = directory.canonicalFile
+        require(canonical.isDirectory && (canonical.path == canonicalRoot.path || canonical.path.startsWith(canonicalRoot.path + File.separator))) {
+            "$label must be inside the app-private runtime directory"
+        }
     }
 
     private fun validateDisplaySocket(socket: File?) {

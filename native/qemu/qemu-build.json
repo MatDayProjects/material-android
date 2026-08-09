@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "qemu": {
+    "version": "11.0.3",
+    "sourceUrl": "https://download.qemu.org/qemu-11.0.3.tar.xz",
+    "sha256": "da5fcffc32762820568b828ed430a728864d34d50b6d2f30358597760cbb0523"
+  },
+  "termuxPackages": {
+    "repository": "https://github.com/termux/termux-packages.git",
+    "revision": "3ac994572339cb4c6a5b909918585bdf24319323",
+    "package": "qemu-system-x86-64-headless",
+    "recipe": "packages/qemu-system-x86-64-headless/build.sh",
+    "builderImage": "ghcr.io/termux/package-builder@sha256:4471cc862c570b15c3a0440668e80b37c9c1750d94fa88a0a4885d959ccf832e",
+    "patches": [
+      {"path": "packages/qemu-system-x86-64-headless/0000-android-config-support.patch", "sha256": "fce0dfdfb5e59178e2baaa878f3d89b394af4e37058a24d4ea602d9a00d0b0d4"},
+      {"path": "packages/qemu-system-x86-64-headless/0001-fix-hardcoded-paths.patch", "sha256": "801d7def38a0fbc10e55cc16642da8d3597071f71b83b54015c6b4d50f061180"},
+      {"path": "packages/qemu-system-x86-64-headless/0002-fix-soundcard.h-location.patch", "sha256": "86ce859b0b908cc9c5b1a179521772ae9db8f6d455da77c53e317d7d2b27e1e3"},
+      {"path": "packages/qemu-system-x86-64-headless/0003-fix-time_nsec-defs.patch", "sha256": "725fec80a44807c7c0a4dbfb16012bb9860090f1ce073442e9b9a62c05c7b7a3"},
+      {"path": "packages/qemu-system-x86-64-headless/0004-add-missing-telldir-seekdir.patch", "sha256": "cfcd1dca1b017909aa412b6a1e9f5747086160c01a4e8632a9c579f1c63c9ec4"},
+      {"path": "packages/qemu-system-x86-64-headless/0005-add-missing-sigorset.patch", "sha256": "b8a40e11b9c634e456cd9460a00d00fe0e5f775035f0f395829e5f4578c89de3"},
+      {"path": "packages/qemu-system-x86-64-headless/0006-fix-sem.h-location.patch", "sha256": "40aaf64ad5df0b7031b63786139a355a360ee29910542146c02c70cbc2e469c4"},
+      {"path": "packages/qemu-system-x86-64-headless/0007-fix-syscalls.patch", "sha256": "976fbbcfa3dff91acd51f7eee3e67cc1da13c06cef8322bf0a7c0063b647b051"},
+      {"path": "packages/qemu-system-x86-64-headless/0008-fix-struct-member-conflicts.patch", "sha256": "b2c90a3f376ae7971d5d41a1126e7f789eda9e1bb508c4a92a7c8026c73e2f5e"},
+      {"path": "packages/qemu-system-x86-64-headless/0009-disable-glob.h-include.patch", "sha256": "236740261891e45f7cc134f24d18227a6ec90cc66348ab9db0d8ae2a5c66f2e6"},
+      {"path": "packages/qemu-system-x86-64-headless/0010-add-missing-arch_prctl.patch", "sha256": "8a7b9bac111d3b01be554f137c9a7aa0d6aa72708d8094f334f795232fd93f2b"},
+      {"path": "packages/qemu-system-x86-64-headless/0011-mmap_min_addr-fallback.patch", "sha256": "5eca8f412c0e50ffb210e9865fa6d041193bfb157c80ceff8ba415c770d99c30"},
+      {"path": "packages/qemu-system-x86-64-headless/0012-force-ucs2-little-endian.patch", "sha256": "c63daa8efaf6a2f072255ff1cd3d154ba0aeaab40ca4f967ea25452cd67fcde0"},
+      {"path": "packages/qemu-system-x86-64-headless/0013-9pfs-dont-chmod-mapfile.patch", "sha256": "7cc3ebf3f0accae362c991226c420be92e5d71b73a9a4ffe357b9caf9c088fe1"},
+      {"path": "packages/qemu-system-x86-64-headless/0014-disable-signalfd.patch", "sha256": "b00e02b746f74b886d39e6769e09f952293902452b17808b2e82acc24c93619f"},
+      {"path": "packages/qemu-system-x86-64-headless/0015-workaround-android-ndk-patch.patch", "sha256": "01d67a4412ec65a6834d4f7895c6b4727457e3f5fe78805e2a2b73b3be567d40"},
+      {"path": "packages/qemu-system-x86-64-headless/0016-Add-workaround-for-tagged-pointers-on-Android-12.patch", "sha256": "cf3a1fc27a32b8630078cc61233c40d13f5b91f7376da2455b7e28b8521cf4cb"},
+      {"path": "packages/qemu-system-x86-64-headless/0017-shm_open.patch", "sha256": "d0eb47699047df6d08a6eb461773910ad6abbf192e6c03adbdcc4c41d9a65602"},
+      {"path": "packages/qemu-system-x86-64-headless/0018-libnfs-fix.patch", "sha256": "05909078575616433f2cefe87662e3f01d16d3abca124d92c66b89ebcef308ec"},
+      {"path": "packages/qemu-system-x86-64-headless/0019-no-timespec_get.patch", "sha256": "d61308f9b68c3e39c956e2208bb5e53ba3d517afa91a22cf0b01d7ff814b8084"}
+    ]
+  },
+  "android": {
+    "minimumNativeApi": 29,
+    "abis": ["arm64-v8a", "x86_64"],
+    "termuxArchitectures": ["aarch64", "x86_64"],
+    "requiredGuestPageSizeBytes": 16384,
+    "executableDirectory": "nativeLibraryDir",
+    "librarySearchPath": "nativeLibraryDir"
+  },
+  "packaging": {
+    "guestExecutables": ["aarch64", "x86_64"],
+    "binaryNamePattern": "libopenvm-qemu-{guest}.so",
+    "dataDirectory": "runtime-assets/native-qemu/{abi}",
+    "runtimeSourceProperty": "OPENVM_QEMU_RUNTIME_DIR"
+  }
+}

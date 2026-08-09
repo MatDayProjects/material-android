@@ -10,7 +10,8 @@ provided to one signing step.
 | Workflow | Trigger | Build and verification | Secret access | Uploaded evidence |
 | --- | --- | --- | --- | --- |
 | `.github/workflows/android-ci.yml` | Pull request, every push, or manual dispatch | `testDebugUnitTest`, `assembleDebug`, and `apksigner verify` for every debug APK | None | Debug APKs and safe test/report files for 14 days |
-| `.github/workflows/android-release.yml` | `v*` tag push, or manual dispatch with `release=true` | Debug validation first, then Gradle signing from the protected CI environment, fallback `apksigner` signing only when an APK is not already signed by the configured certificate, and certificate verification for every APK/AAB | Only the `android-release` environment's four signing secrets | Signed APKs/AABs, verification results, and SHA-256 checksums for 30 days |
+| `.github/workflows/android-release.yml` | `v*` tag push, or manual dispatch with `release=true` | Pinned native QEMU runtime build first, debug APK validation with all runtime members, then Gradle signing from the protected CI environment, fallback `apksigner` signing only when an APK is not already signed by the configured certificate, and certificate verification for every APK/AAB | Only the `android-release` environment's four signing secrets | Signed APKs/AABs, runtime/provenance, verification results, and SHA-256 checksums for 30 days |
+| `.github/workflows/android-native-qemu.yml` | Every push or manual dispatch | Pinned QEMU/Termux source verification, Android host-ABI runtime build, generated APK member and 16 KiB alignment checks, and API 35 emulator `--version`/`-machine help` plus production-controller smoke tests | None | Runtime, provenance, APK, and test evidence for 14 days |
 
 Android builds use `ubuntu-24.04`; the Windows-only product scope does not apply to
 this Android lane. The validation workflow cancels obsolete push runs. The release

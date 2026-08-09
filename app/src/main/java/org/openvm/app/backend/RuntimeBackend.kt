@@ -21,6 +21,7 @@ data class BackendDescriptor(
  */
 class RuntimeBackendRegistry(private val context: Context) {
     private val assetStore = RuntimeAssetStore(context)
+    private val nativeQemuRuntime = NativeQemuRuntime(context)
 
     fun descriptors(): List<BackendDescriptor> = listOf(
         BackendDescriptor(
@@ -40,12 +41,12 @@ class RuntimeBackendRegistry(private val context: Context) {
         BackendDescriptor(
             id = "qemu",
             name = "QEMU",
-            readiness = if (assetStore.hasAnyQemuExecutable()) {
+            readiness = if (assetStore.hasAnyQemuExecutable() || nativeQemuRuntime.hasAnyRuntime()) {
                 BackendReadiness.READY
             } else {
                 BackendReadiness.NOT_CONFIGURED
             },
-            explanation = "QEMU is a process-backed open-source adapter. This summary reports whether any executable is materialized; each profile is checked separately before start. OpenVM copies the selected executable, manifest, and bootable guest assets into app-private storage and never downloads a binary.",
+            explanation = "QEMU is a process-backed open-source adapter. This summary reports whether a bundled or imported executable is available; each profile is checked separately before start. OpenVM never downloads a binary at runtime.",
         ),
     )
 
@@ -54,10 +55,14 @@ class RuntimeBackendRegistry(private val context: Context) {
             ?: return "The selected runtime backend is unknown."
         return when {
             profile.imageUri.isNullOrBlank() -> "Import a guest image before starting this profile."
-            profile.backendId == "qemu" && profile.qemuExecutableUri.isNullOrBlank() -> "Import a QEMU executable before starting this profile."
+            profile.backendId == "qemu" && profile.qemuExecutableUri.isNullOrBlank() && !nativeQemuRuntime.hasRuntime(profile) -> "Import a QEMU executable before starting this profile."
             profile.backendId == "qemu" && profile.guestManifestUri.isNullOrBlank() -> "Import a guest-image manifest before starting this QEMU profile."
             backend.readiness != BackendReadiness.READY && profile.backendId != "qemu" -> backend.explanation
             else -> "The runtime is ready."
         }
     }
+
+    fun bundledQemuRuntime(profile: VmProfile): BundledQemuRuntime? = nativeQemuRuntime.locate(profile)
+
+    fun hasBundledQemuRuntime(profile: VmProfile): Boolean = nativeQemuRuntime.hasRuntime(profile)
 }

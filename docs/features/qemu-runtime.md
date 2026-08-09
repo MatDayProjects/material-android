@@ -3,25 +3,35 @@
 OpenVM now contains a process-backed QEMU adapter for profiles whose backend is
 `qemu`. The adapter proves the guest process lifecycle and serial output boundary
 and can expose a framebuffer-only display over a private UNIX-domain VNC socket.
-It still requires a user-supplied runtime and bootable image; a running process is
-not treated as proof that Android has booted.
+It can use the workflow-built native runtime on Android API 29+ or an explicitly
+imported executable, but always requires a bootable image and manifest; a running
+process is not treated as proof that Android has booted.
 
 ## Configuration
 
 1. Create or edit a VM profile.
 2. Select **QEMU** as the runtime backend.
-3. Import an Android-compatible QEMU executable. It must be an ELF executable
-   for the device's host ABI; OpenVM does not download or bundle an opaque binary.
+3. Use the workflow-built QEMU runtime when the installed APK contains a matching
+   host ABI, or import an Android-compatible QEMU executable. An imported executable
+   must be an ELF executable for the device's host ABI; OpenVM does not download an
+   opaque binary at runtime.
 4. Import a version-1 [guest-image manifest](guest-image-manifest.md).
 5. Import a bootable raw guest disk image whose size and SHA-256 match the manifest.
 6. If the manifest uses `kernel-initrd`, import the kernel and initrd files whose
    size and SHA-256 match the manifest metadata.
 7. Select **Start**.
 
-OpenVM copies the selected executable, image, and optional boot artifacts from their
+OpenVM copies imported executables, images, and optional boot artifacts from their
 Storage Access Framework URIs into `files/runtime-assets/`. Each copy is bounded,
-SHA-256 hashed, written to a unique temporary sibling, and atomically committed. The
-QEMU controller accepts only regular files inside that app-private directory.
+SHA-256 hashed, written to a unique temporary sibling, and atomically committed. A
+workflow-built executable is installed by Android in `nativeLibraryDir`; its libraries
+are searched from that same directory so the app does not try to execute a binary
+copied into ordinary app data. The QEMU controller accepts only regular files inside
+the app-private runtime directory or the verified native-library directory.
+
+The native source and packaging contract is documented in [Native QEMU build
+lane](native-qemu-build.md). Its runtime data directory, when present, is extracted
+into the app-private runtime directory and passed to QEMU with `-L`.
 
 ## Command contract
 
@@ -95,7 +105,8 @@ on that emulator:
 
 ![OpenVM API 37 runtime backend surface](evidence/qemu-runtime-api37.png)
 
-The repository does not yet ship a QEMU binary, serial-console presentation,
-file-transfer transport, or verified Android guest boot. The next runtime milestone
-must build and package a reproducible QEMU target and verify a real Android guest
-before claiming VMOS-level feature parity.
+The source-only debug APK does not ship generated QEMU bytes. The native workflow builds
+and packages the pinned runtime, verifies every host/guest library combination and data
+root, and then exercises the production controller path on an Android emulator.
+The repository still does not claim serial-console presentation, file-transfer
+transport, or a verified Android guest boot; those remain separate gates.

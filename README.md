@@ -2,7 +2,7 @@
 
 OpenVM is a local-first, open-source Android VM control plane inspired by the isolation and multi-instance workflow of VMOS. It is written from scratch and does not copy VMOS code, assets, branding, or private services.
 
-> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, validates a strict guest-image manifest against the selected profile and image/boot-artifact digests, materializes selected guest assets into app-private storage, starts a user-supplied QEMU executable through a validated process boundary, exposes a private UNIX-socket framebuffer transport with bounded touch/key input, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. It does not yet bundle QEMU or claim a verified Android guest boot, serial console, or file transfer.
+> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, validates a strict guest-image manifest against the selected profile and image/boot-artifact digests, materializes selected guest assets into app-private storage, can use a workflow-built QEMU runtime from Android's native-library directory or an explicitly imported executable, exposes a private UNIX-socket framebuffer transport with bounded touch/key input, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. The bundled native lane is experimental and has not yet proved an Android guest boot, serial console, or file transfer.
 
 ## Contents
 
@@ -21,7 +21,8 @@ OpenVM is a local-first, open-source Android VM control plane inspired by the is
 - Versioned guest-image manifest import with strict JSON, architecture/machine pairing, raw-disk metadata, SHA-256/size verification, and explicit disk-only or kernel-initrd boot contracts.
 - Local JSON configuration import/export.
 - Local append-only history for profile creation, editing, deletion, import, and export.
-- Multiple profile cards with truthful lifecycle states. QEMU starts only after an executable, manifest, and bootable image are imported; AVF remains explicitly unavailable until its platform adapter is verified. There is no fake “running” state.
+- Multiple profile cards with truthful lifecycle states. QEMU starts only after a bundled or imported executable, manifest, and bootable image are available; AVF remains explicitly unavailable until its platform adapter is verified. There is no fake “running” state.
+- An open native QEMU build lane pinned to QEMU 11.0.3, the exact Termux Android patch revision, immutable Termux builder image, host ABIs, runtime library closure, 16 KiB ELF contract, APK/AAB packaging contract, and required-runtime emulator probes. The lane never commits QEMU source or generated binaries.
 - A process-backed QEMU adapter with ELF/path checks, bounded image and executable materialization, deterministic TCG command construction, serial output capture, stop timeouts, and explicit exit states.
 - A private UNIX-domain VNC/RFB framebuffer transport attached to running QEMU profiles; it is local-only, renders the guest display, and sends bounded touch/key events without opening a TCP listener. It still makes no boot-readiness claim.
 - Explicit QEMU kernel/initrd argument construction for manifests that select the `kernel-initrd` contract; boot artifacts are size/hash checked, stay app-private, and are never passed through a shell.
@@ -42,6 +43,7 @@ Android UI
   └── RuntimeBackendRegistry
         ├── AVF adapter boundary (Android 13+ capability check)
         └── QemuRuntimeController
+              ├── packaged native-library runtime or explicit imported executable
               ├── app-private asset materialization
               ├── strict guest-image manifest and integrity gate
               ├── deterministic QEMU process lifecycle
@@ -49,7 +51,7 @@ Android UI
               └── local UNIX-socket VNC framebuffer client with bounded input
 ```
 
-The boundary is deliberate. Android's VirtualizationService manages crosvm guests, but access depends on device and platform capabilities. QEMU is therefore an explicit user-supplied open-source runtime in this milestone; a normal app must not claim full guest execution without a compatible executable, bootable image, display transport, permissions, and runtime verification.
+The boundary is deliberate. Android's VirtualizationService manages crosvm guests, but access depends on device and platform capabilities. QEMU is built from open-source upstream inputs, but a normal app must not claim full guest execution without a compatible executable, bootable image, display transport, permissions, and runtime verification.
 
 ## Build locally
 
@@ -65,6 +67,12 @@ Requirements:
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+The optional native QEMU lane additionally needs Linux, Docker, `jq`, `curl`, `readelf`,
+and `sha256sum`; GitHub Actions provides that environment. It targets Android API 29+
+for bundled native execution. Run
+`native/qemu/build-android.sh --verify-only` to validate the checked-in source and
+patch pins without creating a runtime locally.
 
 ## Release signing
 
@@ -90,6 +98,7 @@ Do not open issues or pull requests containing private keystores, passwords, acc
 - [VM profiles](docs/features/vm-profiles.md)
 - [Guest-image manifest](docs/features/guest-image-manifest.md)
 - [QEMU runtime adapter](docs/features/qemu-runtime.md)
+- [Native QEMU build lane](docs/features/native-qemu-build.md)
 - [Search and regex builder](docs/features/search-and-regex.md)
 - [APK signing](docs/ci/apk-signing.md)
 - [Roadmap](ROADMAP.md)

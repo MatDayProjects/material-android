@@ -25,3 +25,7 @@ local.properties
 # Local scratch
 .openvm-local/
 
+# Generated native-runtime outputs
+native/qemu/dist/
+native/qemu/runtime/
+

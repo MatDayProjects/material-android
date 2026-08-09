@@ -507,7 +507,11 @@ class MainActivity : AppCompatActivity() {
             showMessage(message)
             return
         }
-        if (profile.imageUri.isNullOrBlank() || profile.qemuExecutableUri.isNullOrBlank() || profile.guestManifestUri.isNullOrBlank()) {
+        val bundledRuntimeAvailable = profile.qemuExecutableUri.isNullOrBlank() && backendRegistry.hasBundledQemuRuntime(profile)
+        if (profile.imageUri.isNullOrBlank() ||
+            (profile.qemuExecutableUri.isNullOrBlank() && !bundledRuntimeAvailable) ||
+            profile.guestManifestUri.isNullOrBlank()
+        ) {
             showMessage(backendRegistry.startReadiness(profile))
             return
         }
@@ -519,6 +523,11 @@ class MainActivity : AppCompatActivity() {
         fun isCurrentStart(): Boolean = startGenerations[profile.id] == generation
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                val bundledRuntime = if (profile.qemuExecutableUri.isNullOrBlank()) {
+                    backendRegistry.bundledQemuRuntime(profile)
+                } else {
+                    null
+                }
                 val manifest = runtimeAssetStore.materializeGuestManifest(
                     profile.id,
                     Uri.parse(profile.guestManifestUri),
@@ -532,7 +541,11 @@ class MainActivity : AppCompatActivity() {
                 )
                 manifest.requireImageMatch(image)
                 if (!isCurrentStart()) return@launch
-                val executable = runtimeAssetStore.materializeQemuExecutable(profile.id, Uri.parse(profile.qemuExecutableUri))
+                val executableFile = if (profile.qemuExecutableUri.isNullOrBlank()) {
+                    (bundledRuntime ?: error("No bundled QEMU runtime is available for this host ABI")).executable
+                } else {
+                    runtimeAssetStore.materializeQemuExecutable(profile.id, Uri.parse(profile.qemuExecutableUri)).file
+                }
                 if (!isCurrentStart()) return@launch
                 val bootArtifacts = if (manifest.bootContract == GuestImageManifest.BOOT_CONTRACT_KERNEL_INITRD) {
                     val kernelUri = profile.kernelUri ?: error("The manifest requires a guest kernel")
@@ -550,7 +563,7 @@ class MainActivity : AppCompatActivity() {
                 val listenerApplied = java.util.concurrent.atomic.AtomicBoolean(false)
                 val started = qemuRuntimeController.start(
                     profile,
-                    executable.file,
+                    executableFile,
                     image.file,
                     displaySocket,
                     listener = { snapshot ->
@@ -561,6 +574,7 @@ class MainActivity : AppCompatActivity() {
                     },
                     shouldStart = { isCurrentStart() },
                     bootArtifacts = bootArtifacts,
+                    qemuDataDirectory = bundledRuntime?.dataDirectory,
                 )
                 withContext(Dispatchers.Main) {
                     if (isCurrentStart() && !listenerApplied.get()) applyRuntimeSnapshot(started)
@@ -737,10 +751,22 @@ class MainActivity : AppCompatActivity() {
             .setMessage("This removes only the local profile record. The guest image file is not deleted.")
             .setNegativeButton(R.string.action_cancel, null)
             .setPositiveButton(R.string.menu_delete) { _, _ ->
-                profileStore.delete(profile.id)
-                historyStore.record("deleted", profile.name)
-                showMessage(Copy.deleted.render(settings))
-                renderCurrentTab()
+                val wasActive = qemuRuntimeController.snapshot(profile.id).state in setOf(
+                    RuntimeProcessState.STARTING,
+                    RuntimeProcessState.RUNNING,
+                    RuntimeProcessState.STOPPING,
+                )
+                startGenerations.remove(profile.id)
+                closeDisplayClient(profile.id)
+                lifecycleScope.launch(Dispatchers.IO) {
+                    if (wasActive) qemuRuntimeController.stop(profile.id)
+                    withContext(Dispatchers.Main) {
+                        profileStore.delete(profile.id)
+                        historyStore.record("deleted", profile.name)
+                        showMessage(Copy.deleted.render(settings))
+                        renderCurrentTab()
+                    }
+                }
             }
             .show()
     }
@@ -827,7 +853,11 @@ class MainActivity : AppCompatActivity() {
         })
         val qemuLabel = TextView(this).apply {
             text = pendingQemuExecutableUri?.let { getString(R.string.qemu_executable_selected, uriDisplayName(Uri.parse(it))) }
-                ?: getString(R.string.qemu_executable_none)
+                ?: if (backendRegistry.hasBundledQemuRuntime(existing ?: VmProfile(name = "preview"))) {
+                    getString(R.string.qemu_executable_bundled)
+                } else {
+                    getString(R.string.qemu_executable_none)
+                }
             textSize = 13f
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
             setPadding(0, dp(8), 0, dp(4))

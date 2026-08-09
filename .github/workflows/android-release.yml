@@ -22,33 +22,114 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-runtime:
+    name: Build QEMU runtime (${{ matrix.abi }})
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release == true
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+          - abi: x86_64
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - name: Bootstrap native build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils jq
+          command -v bash
+          command -v curl
+          command -v docker
+          command -v git
+          command -v jq
+          command -v readelf
+          command -v sha256sum
+
+      - name: Verify the source and patch manifest
+        shell: bash
+        run: bash native/qemu/build-android.sh --verify-only
+
+      - name: Build and collect the Android runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash native/qemu/build-android.sh \
+            --host-abi "${{ matrix.abi }}" \
+            --output "${RUNNER_TEMP}/openvm-qemu/${{ matrix.abi }}"
+          mkdir -p native/qemu/dist
+          cp -a "${RUNNER_TEMP}/openvm-qemu/${{ matrix.abi }}" native/qemu/dist/
+          test -s "native/qemu/dist/${{ matrix.abi }}/libopenvm-qemu-aarch64.so"
+          test -s "native/qemu/dist/${{ matrix.abi }}/libopenvm-qemu-x86_64.so"
+          test -d "native/qemu/dist/${{ matrix.abi }}/share/qemu"
+          jq empty "native/qemu/dist/${{ matrix.abi }}/runtime.json"
+          jq empty "native/qemu/dist/${{ matrix.abi }}/build-provenance.json"
+
+      - name: Upload native runtime evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-release-qemu-runtime-${{ matrix.abi }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: native/qemu/dist
+          if-no-files-found: warn
+          retention-days: 14
+
   debug-build:
     name: Validate debug APK before release
     if: >-
       github.event_name == 'push' ||
       inputs.release == true
+    needs: native-runtime
     runs-on: ubuntu-24.04
+    env:
+      OPENVM_QEMU_RUNTIME_DIR: ${{ github.workspace }}/native/qemu/runtime
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
       - name: Validate the Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.1
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.1
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.1
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           packages: platform-tools platforms;android-35 build-tools;35.0.0
+
+      - name: Download both native runtime ABIs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: android-release-qemu-runtime-*-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: native/qemu/runtime
+          merge-multiple: true
+
+      - name: Validate packaged runtime inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s native/qemu/runtime/arm64-v8a/libopenvm-qemu-aarch64.so
+          test -s native/qemu/runtime/arm64-v8a/libopenvm-qemu-x86_64.so
+          test -s native/qemu/runtime/x86_64/libopenvm-qemu-aarch64.so
+          test -s native/qemu/runtime/x86_64/libopenvm-qemu-x86_64.so
+          test -d native/qemu/runtime/arm64-v8a/share/qemu
+          test -d native/qemu/runtime/x86_64/share/qemu
 
       - name: Ensure apksigner is available
         shell: bash
@@ -98,15 +179,22 @@ jobs:
 
           for apk in "${debug_apks[@]}"; do
             "$APKSIGNER_PATH" verify --verbose "$apk" >/dev/null
+            unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
+            unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-x86_64.so'
+            unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-aarch64.so'
+            unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-x86_64.so'
+            unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
+            unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
+            zipalign -c -P 16 4 "$apk"
             echo "Verified debug APK: ${apk#./}"
           done
 
       - name: Upload safe pre-release evidence
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-release-debug-evidence-${{ github.run_id }}
+          name: android-release-debug-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: |
             **/build/outputs/apk/debug/*.apk
             **/build/test-results/**/*.xml
@@ -117,34 +205,54 @@ jobs:
 
   signed-release:
     name: Build and verify signed release artifacts
-    needs: debug-build
+    needs: [debug-build, native-runtime]
     if: >-
       needs.debug-build.result == 'success' &&
       (github.event_name == 'push' || inputs.release == true)
     runs-on: ubuntu-24.04
+    env:
+      OPENVM_QEMU_RUNTIME_DIR: ${{ github.workspace }}/native/qemu/runtime
     environment:
       name: android-release
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
       - name: Validate the Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.1
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.1
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.1
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           packages: platform-tools platforms;android-35 build-tools;35.0.0
+
+      - name: Download both native runtime ABIs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: android-release-qemu-runtime-*-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: native/qemu/runtime
+          merge-multiple: true
+
+      - name: Validate packaged runtime inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s native/qemu/runtime/arm64-v8a/libopenvm-qemu-aarch64.so
+          test -s native/qemu/runtime/arm64-v8a/libopenvm-qemu-x86_64.so
+          test -s native/qemu/runtime/x86_64/libopenvm-qemu-aarch64.so
+          test -s native/qemu/runtime/x86_64/libopenvm-qemu-x86_64.so
+          test -d native/qemu/runtime/arm64-v8a/share/qemu
+          test -d native/qemu/runtime/x86_64/share/qemu
 
       - name: Ensure apksigner is available
         shell: bash
@@ -281,6 +389,24 @@ jobs:
             exit 1
           fi
 
+          for apk in "${release_apks[@]}"; do
+            unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
+            unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-x86_64.so'
+            unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-aarch64.so'
+            unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-x86_64.so'
+            unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
+            unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
+            zipalign -c -P 16 4 "$apk"
+          done
+          for aab in "${release_aabs[@]}"; do
+            unzip -l "$aab" | grep -F 'base/lib/x86_64/libopenvm-qemu-aarch64.so'
+            unzip -l "$aab" | grep -F 'base/lib/x86_64/libopenvm-qemu-x86_64.so'
+            unzip -l "$aab" | grep -F 'base/lib/arm64-v8a/libopenvm-qemu-aarch64.so'
+            unzip -l "$aab" | grep -F 'base/lib/arm64-v8a/libopenvm-qemu-x86_64.so'
+            unzip -l "$aab" | grep -F 'base/assets/native-qemu/x86_64/share/qemu/'
+            unzip -l "$aab" | grep -F 'base/assets/native-qemu/arm64-v8a/share/qemu/'
+          done
+
           verification_file="$artifact_dir/verification.txt"
           : > "$verification_file"
 
@@ -384,9 +510,9 @@ jobs:
       - name: Upload safe signed release evidence
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-release-evidence-${{ github.run_id }}
+          name: android-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: ${{ steps.release.outputs.artifact_dir }}
           if-no-files-found: warn
           retention-days: 30

@@ -35,6 +35,21 @@ class QemuRuntimeControllerTest {
     }
 
     @Test
+    fun commandCanPointAtPrivateQemuDataDirectory() {
+        val profile = VmProfile(name = "data", architecture = "arm64-v8a")
+        val dataDirectory = java.io.File("runtime", "native-qemu/share/qemu")
+
+        val command = builder.build(
+            profile,
+            java.io.File("qemu-system-aarch64"),
+            java.io.File("guest.img"),
+            qemuDataDirectory = dataDirectory,
+        )
+
+        assertTrue(command.containsAll(listOf("-L", dataDirectory.absolutePath)))
+    }
+
+    @Test
     fun kernelInitrdCommandUsesExplicitBootArtifacts() {
         val profile = VmProfile(name = "boot", architecture = "arm64-v8a")
         val kernel = java.io.File("runtime", "Image")
