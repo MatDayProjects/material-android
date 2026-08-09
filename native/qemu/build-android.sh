@@ -49,6 +49,7 @@ minimum_native_api="$(jq -r '.android.minimumNativeApi' "$MANIFEST")"
 required_guest_page_size="$(jq -r '.android.requiredGuestPageSizeBytes' "$MANIFEST")"
 packaging_executable_directory="$(jq -r '.android.executableDirectory' "$MANIFEST")"
 packaging_library_search_path="$(jq -r '.android.librarySearchPath' "$MANIFEST")"
+mapfile -t qemu_data_files < <(jq -r '.packaging.qemuDataFiles[]' "$MANIFEST")
 
 [[ "$qemu_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid QEMU version pin" >&2; exit 1; }
 [[ "$source_sha256" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid QEMU SHA-256 pin" >&2; exit 1; }
@@ -61,6 +62,12 @@ packaging_library_search_path="$(jq -r '.android.librarySearchPath' "$MANIFEST")
 [[ "$required_guest_page_size" == 16384 ]] || { echo "The native QEMU lane requires a 16 KiB page-size contract" >&2; exit 1; }
 [[ "$packaging_executable_directory" == nativeLibraryDir ]] || { echo "Native QEMU executables must be packaged in nativeLibraryDir" >&2; exit 1; }
 [[ "$packaging_library_search_path" == nativeLibraryDir ]] || { echo "Native QEMU libraries must resolve from nativeLibraryDir" >&2; exit 1; }
+(( ${#qemu_data_files[@]} > 0 )) || { echo "The native QEMU manifest must allowlist at least one runtime data file" >&2; exit 1; }
+for index in "${!qemu_data_files[@]}"; do
+  qemu_data_files[index]="${qemu_data_files[index]//$'\r'/}"
+  qemu_data_file="${qemu_data_files[$index]}"
+  [[ "$qemu_data_file" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Unsafe QEMU runtime data file name: $qemu_data_file" >&2; exit 1; }
+done
 patch_count="$(jq '.termuxPackages.patches | length' "$MANIFEST")"
 (( patch_count == 20 )) || { echo "Expected 20 pinned Termux QEMU patches, found $patch_count" >&2; exit 1; }
 declare -A manifest_patch_paths=()
@@ -157,7 +164,7 @@ echo "Using Termux builder image: $builder_digest"
 
 mkdir -p "$prefix_dir"
 docker cp "$container_name:/data/data/com.termux/files/usr/." "$prefix_dir/"
-bash "$ROOT_DIR/native/qemu/collect-runtime.sh" "$host_abi" "$prefix_dir" "$output_dir" "$required_guest_page_size"
+bash "$ROOT_DIR/native/qemu/collect-runtime.sh" "$host_abi" "$prefix_dir" "$output_dir" "$required_guest_page_size" "${qemu_data_files[@]}"
 qemu_data_bytes="$(jq -r '.qemuDataBytes' "$output_dir/runtime.json")"
 [[ "$qemu_data_bytes" =~ ^[0-9]+$ ]] || { echo "Collected QEMU data byte count is not numeric" >&2; exit 1; }
 printf '{\n  "schemaVersion": 1,\n  "builderImage": "%s",\n  "termuxRevision": "%s",\n  "termuxRecipe": "%s",\n  "termuxRecipeSha256": "%s",\n  "termuxPatchManifestSha256": "%s",\n  "qemuVersion": "%s",\n  "qemuSourceSha256": "%s",\n  "requiredNativeApi": %s,\n  "requiredPageSizeBytes": %s,\n  "qemuDataBytes": %s\n}\n' \

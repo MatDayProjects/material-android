@@ -2,15 +2,17 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <android-abi> <termux-prefix> <output-directory> <required-page-size-bytes>" >&2
+  echo "Usage: $0 <android-abi> <termux-prefix> <output-directory> <required-page-size-bytes> <qemu-data-file>..." >&2
   exit 2
 }
 
-[[ $# -eq 4 ]] || usage
+[[ $# -ge 5 ]] || usage
 abi="$1"
 prefix="$(realpath "$2")"
 output="$3"
 required_page_size="$4"
+shift 4
+qemu_data_files=("$@")
 
 case "$abi" in
   arm64-v8a|x86_64) ;;
@@ -144,23 +146,23 @@ done
 qemu_data_source="$prefix/share/qemu"
 qemu_data_output="$output/share/qemu"
 qemu_data_file_count=0
+qemu_data_files_json=""
 mkdir -p "$qemu_data_output"
-while IFS= read -r -d '' data_file; do
-  relative_path="${data_file#"$qemu_data_source/"}"
+for index in "${!qemu_data_files[@]}"; do
+  relative_path="${qemu_data_files[$index]}"
+  relative_path="${relative_path//$'\r'/}"
+  [[ "$relative_path" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Unsafe QEMU runtime data file name: $relative_path" >&2; exit 1; }
+  data_file="$qemu_data_source/$relative_path"
+  [[ -f "$data_file" && ! -L "$data_file" ]] || { echo "Required QEMU runtime data file is missing or symlinked: $relative_path" >&2; exit 1; }
   destination="$qemu_data_output/$relative_path"
-  mkdir -p "$(dirname "$destination")"
-  cp -a -- "$data_file" "$destination"
+  cp -- "$data_file" "$destination"
   qemu_data_file_count=$((qemu_data_file_count + 1))
-done < <(
-  find "$qemu_data_source" -type f \
-    ! -path "$qemu_data_source/docs/*" \
-    ! -path "$qemu_data_source/keymaps/*" \
-    ! -path "$qemu_data_source/man/*" \
-    -print0
-)
-(( qemu_data_file_count > 0 )) || { echo "QEMU data directory has no runtime files after excluding documentation, keymaps, and man pages" >&2; exit 1; }
+  comma=','
+  (( index == ${#qemu_data_files[@]} - 1 )) && comma=''
+  qemu_data_files_json+="\"$relative_path\"$comma"
+done
 data_size="$(du -sb "$qemu_data_output" | awk '{print $1}')"
-(( data_size <= 67108864 )) || { echo "QEMU runtime data exceeds 64 MiB after excluding documentation, keymaps, and man pages" >&2; exit 1; }
+(( data_size <= 67108864 )) || { echo "QEMU runtime data allowlist exceeds 64 MiB" >&2; exit 1; }
 
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 
@@ -174,11 +176,12 @@ sha256_file() { sha256sum "$1" | awk '{print $1}'; }
     printf '    "%s": {"path": "libopenvm-qemu-%s.so", "sizeBytes": %s, "sha256": "%s"}%s\n' \
       "$guest" "$guest" "$(stat -c '%s' "$file")" "$(sha256_file "$file")" "$comma"
   done
-  printf '  },\n  "libraryCount": %s,\n  "qemuDataFileCount": %s,\n  "qemuDataBytes": %s,\n  "hasQemuDataDirectory": %s,\n  "excludedDataDirectories": ["docs", "keymaps", "man"]\n}\n' \
+  printf '  },\n  "libraryCount": %s,\n  "qemuDataFileCount": %s,\n  "qemuDataBytes": %s,\n  "hasQemuDataDirectory": %s,\n  "qemuDataPolicy": "allowlist",\n  "qemuDataFiles": [%s]\n}\n' \
     "$(find "$output/lib" -maxdepth 1 -type f -name '*.so*' ! -name 'libopenvm-qemu-*.so' | wc -l)" \
     "$qemu_data_file_count" \
     "$data_size" \
-    "$([[ -d "$output/share/qemu" ]] && echo true || echo false)"
+    "$([[ -d "$output/share/qemu" ]] && echo true || echo false)" \
+    "$qemu_data_files_json"
 } > "$output/runtime.json"
 
 echo "Collected Android QEMU runtime for $abi at $output"

@@ -54,11 +54,12 @@ jobs:
           test -s "native/qemu/dist/${{ matrix.abi }}/libopenvm-qemu-x86_64.so"
           jq empty "native/qemu/dist/${{ matrix.abi }}/runtime.json"
           jq empty "native/qemu/dist/${{ matrix.abi }}/build-provenance.json"
-          jq -e '
+          jq -e --slurpfile manifest native/qemu/qemu-build.json '
             (.qemuDataBytes | (type == "number" and . <= 67108864)) and
             (.qemuDataFileCount | (type == "number" and . > 0)) and
             (.hasQemuDataDirectory == true) and
-            (.excludedDataDirectories == ["docs", "keymaps", "man"])
+            (.qemuDataPolicy == "allowlist") and
+            (.qemuDataFiles == $manifest[0].packaging.qemuDataFiles)
           ' "native/qemu/dist/${{ matrix.abi }}/runtime.json"
 
       - name: Upload runtime and build evidence
@@ -115,11 +116,12 @@ jobs:
           test -d native/qemu/runtime/arm64-v8a/share/qemu
           test -d native/qemu/runtime/x86_64/share/qemu
           for abi in arm64-v8a x86_64; do
-            jq -e '
+            jq -e --slurpfile manifest native/qemu/qemu-build.json '
               (.qemuDataBytes | (type == "number" and . <= 67108864)) and
               (.qemuDataFileCount | (type == "number" and . > 0)) and
               (.hasQemuDataDirectory == true) and
-              (.excludedDataDirectories == ["docs", "keymaps", "man"])
+              (.qemuDataPolicy == "allowlist") and
+              (.qemuDataFiles == $manifest[0].packaging.qemuDataFiles)
             ' "native/qemu/runtime/${abi}/runtime.json"
           done
 

@@ -46,6 +46,15 @@
     "guestExecutables": ["aarch64", "x86_64"],
     "binaryNamePattern": "libopenvm-qemu-{guest}.so",
     "dataDirectory": "runtime-assets/native-qemu/{abi}",
+    "qemuDataFiles": [
+      "bios.bin",
+      "bios-256k.bin",
+      "kvmvapic.bin",
+      "vgabios-stdvga.bin",
+      "vgabios-virtio.bin",
+      "vgabios-ramfb.bin",
+      "efi-virtio.rom"
+    ],
     "runtimeSourceProperty": "OPENVM_QEMU_RUNTIME_DIR"
   }
 }

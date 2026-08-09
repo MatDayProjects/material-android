@@ -11,8 +11,8 @@
   `native/qemu/collect-runtime.sh`. It verifies every source and patch digest, builds
   through the open Termux recipe, compares the complete patch set, validates Android
   ELF loader/machine/16 KiB alignment, collects only the transitive runtime closure and
-  bounded QEMU runtime data (excluding documentation, keymaps, and man pages), and
-  records builder/recipe/patch provenance plus the filtered data byte count.
+  bounded, manifest-owned QEMU runtime data (an allowlist for the headless `q35`/`virt`
+  paths), and records builder/recipe/patch provenance plus the data byte count.
 - Added generated Gradle packaging through `OPENVM_QEMU_RUNTIME_DIR`. Packaged QEMU
   executables live in Android `nativeLibraryDir`; the app searches their adjacent
   libraries and extracts optional data into app-private storage. Source-only APKs keep
