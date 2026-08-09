@@ -1,17 +1,21 @@
 # Handoff
 
-## 2026-08-09 · Software-emulator startup ANR fix
+## 2026-08-09 · Bounded hosted emulator validation
 
 ### Current state
 
 - Commit [`2aa0083`](https://github.com/MatDayProjects/material-android/commit/2aa00832bbfab20ee5159a633e5426c6ced5abaf) removes QEMU controller class resolution from `Application` startup and keeps the production controller in a process-level store. `MainActivity` still obtains the same controller lazily, so Activity recreation does not discard the running guest.
 - The diagnostic run [`31312096672`](https://github.com/MatDayProjects/material-android/actions/runs/31312096672) proved the previous failure was an Android startup ANR under software-only x86_64 emulation: the emulator booted in 621.570 seconds, `system_server` reached 92% CPU, `org.openvm.app.debug` reached 64% CPU, and `ActivityManager` killed the target for `failed to complete startup`. The XML reported 0 tests because instrumentation never attached; this was not a native QEMU library crash.
-- Hosted verification run [`31313839977`](https://github.com/MatDayProjects/material-android/actions/runs/31313839977) is running against this commit. The Android guest kernel/initrd/raw-image boot boundary remains unverified.
+- The graphics retry [`31316724775`](https://github.com/MatDayProjects/material-android/actions/runs/31316724775) was canceled after its smoke step stayed active for 15m22s without a test report; artifact [`9039286818`](https://github.com/MatDayProjects/material-android/actions/runs/31316724775/artifacts/9039286818) preserves the APK and logcat. The log shows Android framework services still starting under software-only emulation, not a native QEMU library failure.
+- Commit [`b2f59e2`](https://github.com/MatDayProjects/material-android/commit/b2f59e2c6dcfcab001df4792c514e97f6a8a082d) gates live instrumentation on readable `/dev/kvm`, writes `emulator-skip.txt` when the hosted runner lacks it, combines the focused classes into one installation, and force-kills an overlong live process.
+- Native run [`31318099320`](https://github.com/MatDayProjects/material-android/actions/runs/31318099320) is green: arm64-v8a 11m00s, x86_64 11m57s, and package 1m53s. Android CI [`31318099312`](https://github.com/MatDayProjects/material-android/actions/runs/31318099312) is green in 1m15s. Artifact [`9039518910`](https://github.com/MatDayProjects/material-android/actions/runs/31318099320/artifacts/9039518910) contains 43 unit tests with 0 failures/errors and the explicit no-KVM evidence. The Android guest kernel/initrd/raw-image boot boundary remains unverified.
 
 ### Verification in this lane
 
 - Java 17 `testDebugUnitTest assembleDebug` — passed locally.
 - Focused packaged `NativeQemuRuntimeSmokeTest` — passed locally, 2/2, using the x86_64 runtime artifact from run `31312096672` without adding generated binaries to the checkout.
+- `actionlint -shellcheck= .github/workflows/android-native-qemu.yml` — passed locally.
+- Native hosted collectors and package checks — passed in run `31318099320`; live instrumentation was explicitly skipped because `/dev/kvm` was not readable.
 - `git diff --check` — passed.
 
 
