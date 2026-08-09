@@ -23,6 +23,7 @@ data class VmProfile(
     val vcpus: Int = 2,
     val imageUri: String? = null,
     val backendId: String = "avf",
+    val qemuExecutableUri: String? = null,
     val status: VmStatus = VmStatus.STOPPED,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
@@ -34,6 +35,7 @@ data class VmProfile(
         if (storageGb !in 1..4096) add("Storage must be between 1 and 4096 GB")
         if (vcpus !in 1..32) add("Virtual CPUs must be between 1 and 32")
         if (architecture !in SUPPORTED_ARCHITECTURES) add("Unsupported guest architecture")
+        if (backendId !in SUPPORTED_BACKENDS) add("Unsupported runtime backend")
     }
 
     fun imageLabel(): String? = imageUri?.substringAfterLast('/').takeUnless { it.isNullOrBlank() }
@@ -43,6 +45,7 @@ data class VmProfile(
 
     companion object {
         val SUPPORTED_ARCHITECTURES = setOf("arm64-v8a", "x86_64")
+        val SUPPORTED_BACKENDS = setOf("avf", "qemu")
     }
 }
 

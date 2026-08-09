@@ -3,6 +3,7 @@ package org.openvm.app.backend
 import android.content.Context
 import android.os.Build
 import org.openvm.app.model.VmProfile
+import org.openvm.app.runtime.RuntimeAssetStore
 
 enum class BackendReadiness { READY, UNAVAILABLE, NOT_CONFIGURED }
 
@@ -19,6 +20,8 @@ data class BackendDescriptor(
  * because the SDK exposes a matching API level or a device node name.
  */
 class RuntimeBackendRegistry(private val context: Context) {
+    private val assetStore = RuntimeAssetStore(context)
+
     fun descriptors(): List<BackendDescriptor> = listOf(
         BackendDescriptor(
             id = "avf",
@@ -37,8 +40,12 @@ class RuntimeBackendRegistry(private val context: Context) {
         BackendDescriptor(
             id = "qemu",
             name = "QEMU",
-            readiness = BackendReadiness.NOT_CONFIGURED,
-            explanation = "The portable QEMU adapter is an open-source native component planned for a follow-up module; no binary is downloaded or hidden in this build.",
+            readiness = if (assetStore.hasAnyQemuExecutable()) {
+                BackendReadiness.READY
+            } else {
+                BackendReadiness.NOT_CONFIGURED
+            },
+            explanation = "QEMU is a process-backed open-source adapter. Import an Android-compatible QEMU executable and a bootable guest image; OpenVM copies both into app-private storage and never downloads a binary.",
         ),
     )
 
@@ -47,9 +54,9 @@ class RuntimeBackendRegistry(private val context: Context) {
             ?: return "The selected runtime backend is unknown."
         return when {
             profile.imageUri.isNullOrBlank() -> "Import a guest image before starting this profile."
-            backend.readiness != BackendReadiness.READY -> backend.explanation
+            profile.backendId == "qemu" && profile.qemuExecutableUri.isNullOrBlank() -> "Import a QEMU executable before starting this profile."
+            backend.readiness != BackendReadiness.READY && profile.backendId != "qemu" -> backend.explanation
             else -> "The runtime is ready."
         }
     }
 }
-

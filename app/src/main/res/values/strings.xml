@@ -26,7 +26,12 @@
     <string name="backend_qemu">QEMU</string>
     <string name="backend_not_ready">Runtime adapter not installed</string>
     <string name="backend_avf_explanation">AVF is a platform capability. A compatible device image and a native runtime adapter are required before a guest can boot.</string>
-    <string name="backend_qemu_explanation">QEMU is the planned portable open-source backend. This build does not bundle a native QEMU binary.</string>
+    <string name="backend_qemu_explanation">QEMU runs a user-supplied Android-compatible executable and guest image inside the OpenVM app-private runtime directory. No binary is downloaded or hidden in this build.</string>
+    <string name="profile_backend">Runtime backend</string>
+    <string name="qemu_executable">QEMU executable</string>
+    <string name="qemu_executable_none">No QEMU executable imported</string>
+    <string name="qemu_executable_selected">QEMU executable selected: %1$s</string>
+    <string name="action_import_qemu">Import QEMU executable</string>
     <string name="profile_name">Profile name</string>
     <string name="android_version">Guest Android version</string>
     <string name="memory_mb">Memory (MB)</string>

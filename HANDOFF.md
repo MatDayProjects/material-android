@@ -7,6 +7,9 @@
 - Bootstrapped a new Android Gradle project under `org.openvm.app`.
 - Added VM profile validation, local JSON persistence, Storage Access Framework image references, export/import, and local history.
 - Added backend readiness boundaries for AVF and QEMU without claiming guest execution.
+- Added a process-backed QEMU lifecycle with private asset copying, ELF/path checks,
+  deterministic TCG command construction, bounded output, stop timeouts, and explicit
+  exit states. The app still requires a user-supplied QEMU executable and bootable image.
 - Added localizable language mode, independent funny levels, emoji toggle, display name, dark theme, regex search builder, and `Ctrl+Shift+F` command palette.
 - Added unit and instrumentation test coverage plus a protected GitHub Actions workflow
   that signs and verifies release APK/AAB artifacts from an encrypted environment.
@@ -16,7 +19,8 @@
 The host toolchain was installed in an isolated user-scoped directory outside the repository. Verified locally with JDK 21, Android SDK platform 35, and Gradle wrapper 8.10.2:
 
 - `./gradlew --no-daemon --no-scan testDebugUnitTest assembleRelease bundleRelease` with JDK 21 — passed; ordinary local release outputs remain unsigned unless the protected signing environment is explicitly supplied.
-- `./gradlew --no-daemon --no-scan testDebugUnitTest lintDebug assembleDebugAndroidTest` with JDK 21 — passed; no emulator was available for executing the instrumentation test.
+- `./gradlew --no-daemon --no-scan testDebugUnitTest lintDebug assembleDebugAndroidTest` with JDK 21 — passed.
+- `./gradlew --no-daemon --no-scan connectedDebugAndroidTest` — passed on the installed `Pixel_10_Pro_XL` API 37 emulator: 3 instrumentation tests passed.
 - `actionlint -shellcheck=` — passed structural workflow validation. The host does not have `shellcheck`, so the run-block shell content was not covered by that local actionlint invocation; hosted CI remains the shell verification gate.
 - `apksigner verify --verbose --print-certs` — passed for the debug APK.
 
@@ -37,4 +41,4 @@ The pushed commit [`1c2a439`](https://github.com/MatDayProjects/material-android
 
 ### Next owner
 
-The next implementation pass should own the native QEMU adapter or AVF adapter as a separate, licensed module. It must not turn the current “not configured” state into a fake “running” state. Visual emulator verification remains open because this host had no Android emulator or connected device.
+The next implementation pass should package a reproducible QEMU native executable, define the Android guest image manifest, and add a real guest display/console transport. It must not turn the current headless process boundary into a fake Android guest screen. Actual guest boot remains unverified until a compatible QEMU binary and bootable Android image are supplied.

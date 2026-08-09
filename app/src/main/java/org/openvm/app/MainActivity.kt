@@ -22,6 +22,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -29,10 +30,14 @@ import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.tabs.TabLayout
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import org.openvm.app.backend.BackendReadiness
+import org.openvm.app.backend.QemuRuntimeController
 import org.openvm.app.backend.RuntimeBackendRegistry
+import org.openvm.app.backend.RuntimeProcessSnapshot
+import org.openvm.app.backend.RuntimeProcessState
 import org.openvm.app.model.VmHistoryEntry
 import org.openvm.app.model.VmHistoryStore
 import org.openvm.app.model.VmProfile
@@ -41,7 +46,11 @@ import org.openvm.app.model.VmStatus
 import org.openvm.app.settings.LanguageMode
 import org.openvm.app.settings.OpenVmSettings
 import org.openvm.app.settings.SettingsStore
+import org.openvm.app.runtime.RuntimeAssetStore
 import org.openvm.app.ui.Copy
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,6 +64,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var historyStore: VmHistoryStore
     private lateinit var settingsStore: SettingsStore
     private lateinit var backendRegistry: RuntimeBackendRegistry
+    private lateinit var runtimeAssetStore: RuntimeAssetStore
+    private lateinit var qemuRuntimeController: QemuRuntimeController
 
     private var settings = OpenVmSettings()
     private var activeTab = TAB_PROFILES
@@ -69,6 +80,8 @@ class MainActivity : AppCompatActivity() {
     private var historyRegexFlags = ""
     private var pendingImageUri: String? = null
     private var activeImageLabel: TextView? = null
+    private var pendingQemuExecutableUri: String? = null
+    private var activeQemuExecutableLabel: TextView? = null
 
     private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -77,6 +90,18 @@ class MainActivity : AppCompatActivity() {
         }
         pendingImageUri = uri.toString()
         activeImageLabel?.text = getString(R.string.guest_image_selected, uri.lastPathSegment ?: uri.toString())
+    }
+
+    private val qemuExecutablePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        pendingQemuExecutableUri = uri.toString()
+        activeQemuExecutableLabel?.text = getString(
+            R.string.qemu_executable_selected,
+            uri.lastPathSegment ?: uri.toString(),
+        )
     }
 
     private val configurationPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -112,10 +137,17 @@ class MainActivity : AppCompatActivity() {
         historyStore = VmHistoryStore(applicationContext)
         settingsStore = SettingsStore(applicationContext)
         backendRegistry = RuntimeBackendRegistry(applicationContext)
+        runtimeAssetStore = RuntimeAssetStore(applicationContext)
+        qemuRuntimeController = QemuRuntimeController(applicationContext)
         settings = settingsStore.read()
         AppCompatDelegate.setDefaultNightMode(if (settings.darkTheme) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO)
         buildShell()
         renderCurrentTab()
+    }
+
+    override fun onDestroy() {
+        if (::qemuRuntimeController.isInitialized) qemuRuntimeController.close()
+        super.onDestroy()
     }
 
     private fun buildShell() {
@@ -300,7 +332,7 @@ class MainActivity : AppCompatActivity() {
         heading.addView(TextView(this).apply { text = statusLabel(profile.status); textSize = 12f; setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary)) })
         body.addView(heading)
         body.addView(TextView(this).apply {
-            text = "${profile.androidVersion} · ${profile.architecture} · ${profile.vcpus} vCPU · ${profile.memoryMb} MB · ${profile.storageGb} GB"
+            text = "${backendLabel(profile.backendId)} · ${profile.androidVersion} · ${profile.architecture} · ${profile.vcpus} vCPU · ${profile.memoryMb} MB · ${profile.storageGb} GB"
             textSize = 14f
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
             setPadding(0, dp(6), 0, 0)
@@ -329,12 +361,73 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleRuntimeAction(profile: VmProfile) {
-        if (profile.status == VmStatus.RUNNING) {
-            showMessage("Stop is waiting for the native runtime adapter")
+        if (profile.status == VmStatus.RUNNING || profile.status == VmStatus.STARTING || profile.status == VmStatus.STOPPING) {
+            if (profile.backendId != "qemu") {
+                showMessage("Stop is waiting for the selected runtime adapter")
+                return
+            }
+            profileStore.updateStatus(profile.id, VmStatus.STOPPING)
+            renderCurrentTab()
+            lifecycleScope.launch(Dispatchers.IO) {
+                val stopped = qemuRuntimeController.stop(profile.id)
+                withContext(Dispatchers.Main) { applyRuntimeSnapshot(stopped) }
+            }
             return
         }
-        val message = if (profile.imageUri.isNullOrBlank()) Copy.imageRequired.render(settings) else Copy.runtimeNotReady.render(settings)
-        showMessage(message)
+        if (profile.backendId != "qemu") {
+            val message = if (profile.imageUri.isNullOrBlank()) Copy.imageRequired.render(settings) else Copy.runtimeNotReady.render(settings)
+            showMessage(message)
+            return
+        }
+        if (profile.imageUri.isNullOrBlank() || profile.qemuExecutableUri.isNullOrBlank()) {
+            showMessage(backendRegistry.startReadiness(profile))
+            return
+        }
+        profileStore.updateStatus(profile.id, VmStatus.STARTING)
+        renderCurrentTab()
+        showMessage("Validating guest image and starting QEMU")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val image = runtimeAssetStore.materializeGuestImage(
+                    profile.id,
+                    Uri.parse(profile.imageUri),
+                    profile.storageGb.toLong() * 1024L * 1024L * 1024L,
+                )
+                val executable = runtimeAssetStore.materializeQemuExecutable(profile.id, Uri.parse(profile.qemuExecutableUri))
+                val started = qemuRuntimeController.start(profile, executable.file, image.file) { snapshot ->
+                    runOnUiThread { applyRuntimeSnapshot(snapshot) }
+                }
+                withContext(Dispatchers.Main) { applyRuntimeSnapshot(started) }
+            } catch (error: Throwable) {
+                withContext(Dispatchers.Main) {
+                    profileStore.updateStatus(profile.id, VmStatus.ERROR)
+                    renderCurrentTab()
+                    showError(error.message ?: "The guest runtime could not be prepared")
+                }
+            }
+        }
+    }
+
+    private fun applyRuntimeSnapshot(snapshot: RuntimeProcessSnapshot) {
+        val status = when (snapshot.state) {
+            RuntimeProcessState.RUNNING -> VmStatus.RUNNING
+            RuntimeProcessState.STARTING -> VmStatus.STARTING
+            RuntimeProcessState.STOPPING -> VmStatus.STOPPING
+            RuntimeProcessState.STOPPED -> VmStatus.STOPPED
+            RuntimeProcessState.ERROR -> VmStatus.ERROR
+        }
+        profileStore.updateStatus(snapshot.profileId, status)
+        renderCurrentTab()
+        when (snapshot.state) {
+            RuntimeProcessState.ERROR -> showError(
+                buildString {
+                    append(snapshot.message)
+                    if (snapshot.outputTail.isNotEmpty()) append("\n").append(snapshot.outputTail.takeLast(3).joinToString("\n"))
+                },
+            )
+            RuntimeProcessState.STOPPED -> showMessage(snapshot.message)
+            else -> Unit
+        }
     }
 
     private fun showProfileActions(profile: VmProfile) {
@@ -387,6 +480,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showProfileEditor(existing: VmProfile?) {
         pendingImageUri = existing?.imageUri
+        pendingQemuExecutableUri = existing?.qemuExecutableUri
         val form = ScrollView(this)
         val column = column().apply { setPadding(dp(4), 0, dp(4), 0) }
         form.addView(column)
@@ -395,7 +489,18 @@ class MainActivity : AppCompatActivity() {
         val memory = input(getString(R.string.memory_mb), (existing?.memoryMb ?: 2048).toString(), InputType.TYPE_CLASS_NUMBER)
         val storage = input(getString(R.string.storage_gb), (existing?.storageGb ?: 16).toString(), InputType.TYPE_CLASS_NUMBER)
         val vcpus = input(getString(R.string.vcpus), (existing?.vcpus ?: 2).toString(), InputType.TYPE_CLASS_NUMBER)
-        listOf(name, androidVersion, memory, storage, vcpus).forEach { column.addView(it) }
+        val backendChoices = arrayOf(getString(R.string.backend_avf), getString(R.string.backend_qemu))
+        val backendInput = MaterialAutoCompleteTextView(this).apply {
+            setSimpleItems(backendChoices)
+            setText(if (existing?.backendId == "qemu") backendChoices[1] else backendChoices[0], false)
+            inputType = InputType.TYPE_NULL
+            contentDescription = getString(R.string.profile_backend)
+        }
+        val backend = TextInputLayout(this).apply {
+            hint = getString(R.string.profile_backend)
+            addView(backendInput)
+        }
+        listOf(name, androidVersion, memory, storage, vcpus, backend).forEach { column.addView(it) }
         val imageLabel = TextView(this).apply {
             text = existing?.imageLabel()?.let { getString(R.string.guest_image_selected, it) } ?: getString(R.string.guest_image_none)
             textSize = 13f
@@ -407,6 +512,19 @@ class MainActivity : AppCompatActivity() {
         column.addView(MaterialButton(this).apply {
             text = getString(R.string.action_import_image)
             setOnClickListener { imagePicker.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
+        })
+        val qemuLabel = TextView(this).apply {
+            text = pendingQemuExecutableUri?.let { getString(R.string.qemu_executable_selected, Uri.parse(it).lastPathSegment ?: it) }
+                ?: getString(R.string.qemu_executable_none)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        activeQemuExecutableLabel = qemuLabel
+        column.addView(qemuLabel)
+        column.addView(MaterialButton(this).apply {
+            text = getString(R.string.action_import_qemu)
+            setOnClickListener { qemuExecutablePicker.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
         })
 
         val dialog = MaterialAlertDialogBuilder(this)
@@ -425,6 +543,8 @@ class MainActivity : AppCompatActivity() {
                         storageGb = storage.editText?.text?.toString()?.toIntOrNull() ?: -1,
                         vcpus = vcpus.editText?.text?.toString()?.toIntOrNull() ?: -1,
                         imageUri = pendingImageUri,
+                        backendId = if (backendInput.text?.toString() == backendChoices[1]) "qemu" else "avf",
+                        qemuExecutableUri = pendingQemuExecutableUri,
                         updatedAt = System.currentTimeMillis(),
                     )
                     profile
@@ -441,7 +561,10 @@ class MainActivity : AppCompatActivity() {
                 renderCurrentTab()
             }
         }
-        dialog.setOnDismissListener { activeImageLabel = null }
+        dialog.setOnDismissListener {
+            activeImageLabel = null
+            activeQemuExecutableLabel = null
+        }
         dialog.show()
     }
 
@@ -831,6 +954,11 @@ class MainActivity : AppCompatActivity() {
         VmStatus.STARTING -> "Starting"
         VmStatus.STOPPING -> "Stopping"
         VmStatus.ERROR -> "Error"
+    }
+
+    private fun backendLabel(id: String): String = when (id) {
+        "qemu" -> getString(R.string.backend_qemu)
+        else -> getString(R.string.backend_avf)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()

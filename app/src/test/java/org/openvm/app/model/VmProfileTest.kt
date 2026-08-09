@@ -43,4 +43,24 @@ class VmProfileTest {
 
         assertEquals(VmStatus.STOPPED, restored.status)
     }
+
+    @Test
+    fun qemuProfilesRetainTheSelectedExecutableReference() {
+        val profile = VmProfile(
+            name = "QEMU test",
+            backendId = "qemu",
+            qemuExecutableUri = "content://com.example.documents/qemu-system-x86_64",
+        )
+
+        assertTrue(profile.validationErrors().isEmpty())
+        assertEquals("qemu", profile.backendId)
+        assertEquals("content://com.example.documents/qemu-system-x86_64", profile.qemuExecutableUri)
+    }
+
+    @Test
+    fun unknownRuntimeBackendsAreRejected() {
+        val profile = VmProfile(name = "Unknown backend", backendId = "mystery")
+
+        assertTrue(profile.validationErrors().any { it.contains("backend", ignoreCase = true) })
+    }
 }
