@@ -35,12 +35,15 @@ APK honest and keeps the native capability visible in the backend readiness stat
 
 Run the workflow `.github/workflows/android-native-qemu.yml` on a push or with
 `workflow_dispatch`. The runtime build matrix creates one host-ABI output for
-`arm64-v8a` and one for `x86_64`; the packaging job combines both, builds the debug APK,
-and runs instrumentation on an API 35 x86_64 emulator. The hosted smoke lane passes
-`-no-accel` so it remains usable on GitHub-hosted Linux machines that do not expose
-`/dev/kvm`; this is slower software VM execution, but it exercises the same packaged
-x86_64 Android runtime. The lifecycle bounds every ADB readiness call and preserves
-emulator logcat, package memory, and device-property evidence before teardown.
+`arm64-v8a` and one for `x86_64`; the packaging job combines both and builds the debug
+APK. When `/dev/kvm` is readable, the job also runs instrumentation on an API 35
+x86_64 emulator and preserves emulator logcat, package memory, and device-property
+evidence before teardown. GitHub-hosted Linux machines commonly lack usable KVM
+permissions; on those runners the workflow records `emulator-skip.txt` and finishes
+the static package/unit-test gate instead of pretending that a software-only emulator
+has provided live instrumentation evidence. The lifecycle still bounds every ADB
+readiness call and force-kills an overlong Gradle/emulator process when the live lane
+is available.
 The application bootstrap keeps QEMU controller construction deferred until the Activity or
 instrumentation path requests it, because software-only startup can otherwise spend its Android
 startup budget resolving the controller before the test runner attaches.
@@ -57,11 +60,12 @@ startup budget resolving the controller before the test runner attaches.
   job; the workflow also requires a
   non-empty data count, an exact match with `qemu-build.json`, and a byte count at or
   below 64 MiB. APK zip alignment is checked for 16 KiB.
-- The instrumentation smoke test is skipped only for a source-only APK in ordinary
-  local `connectedDebugAndroidTest`; the native workflow passes
-  `-PopenvmRequireNativeRuntime=true` and selects the named native runtime and asset
-  classes, so a missing or skipped runtime test fails that job without depending on a
-  focused UI root in a `-no-window` emulator.
+- The instrumentation smoke test is skipped for a source-only APK in ordinary local
+  `connectedDebugAndroidTest`, and the hosted native workflow records an explicit
+  no-KVM skip when `/dev/kvm` is unavailable. When live instrumentation runs, the
+  workflow passes `-PopenvmRequireNativeRuntime=true` and selects the named native
+  runtime and asset classes, so a missing runtime fails rather than becoming an
+  accidental source-only pass.
 - A software-only emulator may boot successfully and still fail instrumentation before any test
   starts if the target application hits an Android startup ANR. The workflow collects logcat,
   memory, and device properties in that case; the application bootstrap fix in commit

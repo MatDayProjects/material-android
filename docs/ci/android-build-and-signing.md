@@ -11,7 +11,7 @@ an unsigned APK is installed; this is expected and is not an authenticity claim.
 | --- | --- | --- | --- | --- |
 | `.github/workflows/android-ci.yml` | Pull request, every push, or manual dispatch | Unit tests, debug APK build, alignment, and safe artifact collection | None | Debug APKs and reports |
 | `.github/workflows/android-release.yml` | `v*` tag push, or manual dispatch with `release=true` | Pinned native QEMU runtime build, debug validation, unsigned release APK/AAB build, runtime member checks, 16 KiB alignment, and absence of signing metadata | None | Unsigned APK/AAB, runtime, provenance, checksums, and reports |
-| `.github/workflows/android-native-qemu.yml` | Every push or manual dispatch | Pinned QEMU/Termux source verification, runtime collection, APK member checks, and API 35 QEMU process smoke tests | None | Runtime, provenance, APK, and test evidence |
+| `.github/workflows/android-native-qemu.yml` | Every push or manual dispatch | Pinned QEMU/Termux source verification, runtime collection, APK member checks, unit tests, and API 35 QEMU process smoke tests when the runner exposes usable KVM | None | Runtime, provenance, APK, test evidence, or an explicit no-KVM record |
 
 The release workflow never reads keystores, passwords, signing aliases, or certificate
 secrets. It also does not invoke `apksigner`, `jarsigner`, `keytool`, or another signer.
@@ -39,7 +39,11 @@ source-only builds do not download QEMU bytes.
 3. The unsigned-release job repeats the runtime input checks, builds `assembleRelease`
    and `bundleRelease`, verifies the same APK/AAB members, rejects signing metadata, and
    writes SHA-256 checksums beside the artifacts.
-4. Safe evidence is uploaded even when an earlier step fails, without uploading source,
+4. The API 35 live instrumentation step runs only when `/dev/kvm` is readable by the
+   runner. GitHub-hosted Linux runners without usable KVM still verify the APK, unit
+   tests, runtime layout, dependency members, and alignment, then upload an explicit
+   no-KVM evidence record instead of hanging on an unreliable software emulator.
+5. Safe evidence is uploaded even when an earlier step fails, without uploading source,
    dependency directories, or credentials.
 
 The manual dispatch boolean is named `release` only to make publication intentional; it

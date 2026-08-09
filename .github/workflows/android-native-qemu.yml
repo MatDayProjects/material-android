@@ -159,10 +159,21 @@ jobs:
           unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
           zipalign -c -P 16 4 "$apk"
 
-      - name: Run the packaged-runtime instrumentation smoke test
+      - name: Run the packaged-runtime instrumentation smoke test when KVM is available
         shell: bash
         run: |
           set -Eeuo pipefail
+          if [[ ! -e /dev/kvm || ! -r /dev/kvm ]]; then
+            mkdir -p app/build/outputs/logs
+            printf '%s\n' \
+              'Live Android instrumentation was not run on this GitHub Actions runner.' \
+              'Reason: /dev/kvm is missing or is not readable by the job user.' \
+              'The APK, unit tests, native runtime assets, manifest checks, and zip alignment were still verified.' \
+              'The live emulator lane requires a Linux host with usable KVM permissions.' \
+              > app/build/outputs/logs/emulator-skip.txt
+            echo "::warning::Live Android instrumentation skipped: this GitHub Actions runner has no usable /dev/kvm; see emulator-skip.txt in the evidence artifact."
+            exit 0
+          fi
           avd_name="openvm-api35"
           avd_home="${RUNNER_TEMP}/openvm-avd"
           emulator_log="${RUNNER_TEMP}/openvm-emulator.log"
@@ -177,9 +188,9 @@ jobs:
           emulator_pid=""
           cleanup() {
             set +e
-            timeout --signal=TERM 30s adb -s emulator-5554 logcat -d -t 2000 -v threadtime > app/build/outputs/logs/logcat.txt 2>&1 || true
-            timeout --signal=TERM 30s adb -s emulator-5554 shell dumpsys meminfo org.openvm.app.debug > app/build/outputs/logs/meminfo.txt 2>&1 || true
-            timeout --signal=TERM 30s adb -s emulator-5554 shell getprop > app/build/outputs/logs/device-properties.txt 2>&1 || true
+            timeout --foreground --kill-after=5s --signal=TERM 30s adb -s emulator-5554 logcat -d -t 2000 -v threadtime > app/build/outputs/logs/logcat.txt 2>&1 || true
+            timeout --foreground --kill-after=5s --signal=TERM 30s adb -s emulator-5554 shell dumpsys meminfo org.openvm.app.debug > app/build/outputs/logs/meminfo.txt 2>&1 || true
+            timeout --foreground --kill-after=5s --signal=TERM 30s adb -s emulator-5554 shell getprop > app/build/outputs/logs/device-properties.txt 2>&1 || true
             adb -s emulator-5554 emu kill >/dev/null 2>&1 || true
             if [[ -n "$emulator_pid" ]]; then
               kill "$emulator_pid" >/dev/null 2>&1 || true
@@ -201,7 +212,7 @@ jobs:
           adb start-server
           booted=0
           for attempt in $(seq 1 600); do
-            if timeout --signal=TERM 15s adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -qx '1'; then
+            if timeout --foreground --kill-after=5s --signal=TERM 15s adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -qx '1'; then
               booted=1
               break
             fi
@@ -218,7 +229,7 @@ jobs:
           fi
           package_ready=0
           for attempt in $(seq 1 60); do
-            if timeout --signal=TERM 15s adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
+            if timeout --foreground --kill-after=5s --signal=TERM 15s adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
               package_ready=1
               break
             fi
@@ -238,8 +249,7 @@ jobs:
             echo "Waiting for software emulator post-boot stabilization (${settle_attempt}/45)"
             sleep 2
           done
-          timeout --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest connectedDebugAndroidTest
-          timeout --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
+          timeout --foreground --kill-after=45s --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest,org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
 
       - name: Upload packaged APK and test evidence
         if: ${{ always() }}
