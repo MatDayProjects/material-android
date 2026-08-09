@@ -1,14 +1,10 @@
 package org.openvm.app
 
 import android.app.Application
-import org.openvm.app.backend.QemuRuntimeController
 
-class OpenVmApplication : Application() {
-    /**
-     * The runtime outlives an Activity recreation so rotating the editor or returning from
-     * the document picker does not terminate a guest that is already running.
-     */
-    val qemuRuntimeController: QemuRuntimeController by lazy {
-        QemuRuntimeController(this)
-    }
-}
+/**
+ * Keep application startup deliberately small. Runtime controller construction is deferred to
+ * [QemuRuntimeControllerStore] so slow software-only Android emulators can attach instrumentation
+ * before resolving the production QEMU stack.
+ */
+class OpenVmApplication : Application()

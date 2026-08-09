@@ -40,6 +40,7 @@ import com.google.android.material.textfield.TextInputLayout
 import org.openvm.app.backend.BackendReadiness
 import org.openvm.app.backend.GuestBootArtifacts
 import org.openvm.app.backend.QemuRuntimeController
+import org.openvm.app.backend.QemuRuntimeControllerStore
 import org.openvm.app.backend.RuntimeBackendRegistry
 import org.openvm.app.backend.RuntimeProcessSnapshot
 import org.openvm.app.backend.RuntimeProcessState
@@ -77,7 +78,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var backendRegistry: RuntimeBackendRegistry
     private lateinit var runtimeAssetStore: RuntimeAssetStore
     private val qemuRuntimeController: QemuRuntimeController
-        get() = (application as OpenVmApplication).qemuRuntimeController
+        get() = QemuRuntimeControllerStore.forApplication(application)
 
     private var settings = OpenVmSettings()
     private var activeTab = TAB_PROFILES
