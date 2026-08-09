@@ -169,14 +169,8 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           script: |
-            ./gradlew --no-daemon --no-scan \
-              -PopenvmRequireNativeRuntime=true \
-              -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest \
-              connectedDebugAndroidTest
-            ./gradlew --no-daemon --no-scan \
-              -PopenvmRequireNativeRuntime=true \
-              -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest \
-              connectedDebugAndroidTest
+            ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest connectedDebugAndroidTest
+            ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
 
       - name: Upload packaged APK and test evidence
         if: ${{ always() }}
