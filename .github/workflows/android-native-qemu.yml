@@ -95,7 +95,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
-          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          packages: platform-tools emulator system-images;android-35;default;x86_64 platforms;android-35 build-tools;35.0.0
 
       - name: Put Android build-tools on PATH
         shell: bash
@@ -160,24 +160,67 @@ jobs:
           zipalign -c -P 16 4 "$apk"
 
       - name: Run the packaged-runtime instrumentation smoke test
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.34.0
-        with:
-          api-level: 35
-          target: default
-          arch: x86_64
-          force-avd-creation: true
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: true
-          script: >-
-            ready=0;
-            for attempt in $(seq 1 60); do
-              if adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then ready=1; break; fi;
-              if [ "$attempt" -eq 60 ]; then echo "Android package service did not become ready after 120 seconds" >&2; exit 1; fi;
-              sleep 2;
-            done;
-            test "$ready" -eq 1;
-            ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest connectedDebugAndroidTest;
-            ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          avd_name="openvm-api35"
+          avd_home="${RUNNER_TEMP}/openvm-avd"
+          emulator_log="${RUNNER_TEMP}/openvm-emulator.log"
+          mkdir -p "$avd_home" app/build/outputs/logs
+          export ANDROID_AVD_HOME="$avd_home"
+          export ANDROID_EMULATOR_HOME="$avd_home"
+          command -v adb
+          command -v avdmanager
+          command -v emulator
+          echo no | avdmanager create avd --force --name "$avd_name" --package "system-images;android-35;default;x86_64" --device "pixel_2"
+          emulator_pid=""
+          cleanup() {
+            set +e
+            adb -s emulator-5554 emu kill >/dev/null 2>&1 || true
+            if [[ -n "$emulator_pid" ]]; then
+              kill "$emulator_pid" >/dev/null 2>&1 || true
+              wait "$emulator_pid" >/dev/null 2>&1 || true
+            fi
+            if [[ -f "$emulator_log" ]]; then
+              cp "$emulator_log" app/build/outputs/logs/emulator.log || true
+            fi
+          }
+          trap cleanup EXIT
+          emulator -avd "$avd_name" -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -port 5554 >"$emulator_log" 2>&1 &
+          emulator_pid=$!
+          adb start-server
+          booted=0
+          for attempt in $(seq 1 600); do
+            if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -qx '1'; then
+              booted=1
+              break
+            fi
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              cat "$emulator_log"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$booted" -ne 1 ]]; then
+            cat "$emulator_log"
+            echo "Android emulator did not finish booting after 600 seconds" >&2
+            exit 1
+          fi
+          package_ready=0
+          for attempt in $(seq 1 60); do
+            if adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
+              package_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$package_ready" -ne 1 ]]; then
+            cat "$emulator_log"
+            echo "Android package service did not become ready after 120 seconds" >&2
+            exit 1
+          fi
+          timeout --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest connectedDebugAndroidTest
+          timeout --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
 
       - name: Upload packaged APK and test evidence
         if: ${{ always() }}
