@@ -100,6 +100,9 @@ termux_dir="$work_root/termux-packages"
 prefix_dir="$work_root/termux-prefix"
 source_archive="$work_root/qemu-${qemu_version}.tar.xz"
 output_dir="$(realpath -m "$output")"
+output_parent="$(dirname "$output_dir")"
+[[ "$output_parent" != "/" ]] || { echo "Refusing the filesystem root as the native QEMU output parent" >&2; exit 1; }
+mkdir -p "$output_parent"
 cleanup() {
   docker rm -f "$container_name" >/dev/null 2>&1 || true
   if [[ "$keep_work" != true && -f "$work_marker" && "$(<"$work_marker")" == "openvm-native-qemu-work-root-v1" ]]; then
