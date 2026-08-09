@@ -169,6 +169,7 @@ jobs:
           mkdir -p "$avd_home" app/build/outputs/logs
           export ANDROID_AVD_HOME="$avd_home"
           export ANDROID_EMULATOR_HOME="$avd_home"
+          export PATH="$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           command -v adb
           command -v avdmanager
           command -v emulator
