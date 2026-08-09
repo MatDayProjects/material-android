@@ -12,8 +12,15 @@
   before launch, and explicit exit states. The app still requires a user-supplied QEMU
   executable and bootable image.
 - Added a private UNIX-domain VNC/RFB framebuffer transport and a real display surface
-  for running profiles. It is framebuffer-only; guest boot readiness, input, console,
-  and file transfer remain unverified.
+  for running profiles. It now sends bounded touch/key events over the same local
+  channel; guest boot readiness, serial console, and file transfer remain unverified.
+- Added a strict version-1 guest-image manifest. QEMU profiles now require the
+  manifest, its architecture/machine pair must match the profile, and the selected
+  raw image's size and SHA-256 must match before launch. Kernel/initrd contracts
+  validate safe relative paths plus size/SHA-256 metadata and pass selected artifacts
+  through explicit QEMU arguments. Manifest bytes use strict UTF-8 and bounded JSON
+  nesting; runtime assets use unique atomic staging files and are excluded from
+  Android backup/transfer.
 - Added localizable language mode, independent funny levels, emoji toggle, display name, dark theme, regex search builder, and `Ctrl+Shift+F` command palette.
 - Added unit and instrumentation test coverage plus a protected GitHub Actions workflow
   that signs and verifies release APK/AAB artifacts from an encrypted environment.
@@ -24,7 +31,7 @@ The host toolchain was installed in an isolated user-scoped directory outside th
 
 - `./gradlew --no-daemon --no-scan testDebugUnitTest assembleRelease bundleRelease` with JDK 21 — passed; ordinary local release outputs remain unsigned unless the protected signing environment is explicitly supplied.
 - `./gradlew --no-daemon --no-scan testDebugUnitTest lintDebug assembleDebugAndroidTest` with JDK 21 — passed.
-- `./gradlew --no-daemon --no-scan connectedDebugAndroidTest` — passed on the installed `Pixel_10_Pro_XL` API 37 emulator: 3 instrumentation tests passed.
+- `./gradlew --no-daemon --no-scan connectedDebugAndroidTest` — passed on the installed `Pixel_10_Pro_XL` API 37 emulator: 4 instrumentation tests passed.
 - `./gradlew --no-daemon --no-scan testDebugUnitTest` — passed after the RFB, collision,
   and cancellation changes; the next integration run must repeat the API 37 emulator gate.
 - `actionlint -shellcheck=` — passed structural workflow validation. The host does not have `shellcheck`, so the run-block shell content was not covered by that local actionlint invocation; hosted CI remains the shell verification gate.
@@ -47,4 +54,4 @@ The pushed commit [`1c2a439`](https://github.com/MatDayProjects/material-android
 
 ### Next owner
 
-The next implementation pass should package a reproducible QEMU native executable, define and enforce the Android guest image manifest, then add guest input, serial-console presentation, and host↔guest file transfer. The current framebuffer surface must not be mistaken for a booted Android guest. Actual guest boot remains unverified until a compatible QEMU binary and bootable Android image are supplied.
+The next implementation pass should package a reproducible QEMU native executable, then add serial-console presentation and host↔guest file transfer. The current framebuffer/input surface and manifest validation must not be mistaken for a booted Android guest. Actual guest boot remains unverified until a compatible QEMU binary and bootable Android image are supplied.

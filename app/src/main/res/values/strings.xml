@@ -13,6 +13,7 @@
     <string name="menu_edit">Edit profile</string>
     <string name="action_create_profile">Create VM profile</string>
     <string name="action_import_image">Import guest image</string>
+    <string name="action_import_manifest">Import guest-image manifest</string>
     <string name="action_save">Save</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_reset">Reset</string>
@@ -33,6 +34,7 @@
     <string name="qemu_executable_selected">QEMU executable selected: %1$s</string>
     <string name="action_import_qemu">Import QEMU executable</string>
     <string name="guest_display">Guest display for %1$s</string>
+    <string name="guest_display_focus">Guest display focused. Touch or use a hardware keyboard to send input.</string>
     <string name="profile_name">Profile name</string>
     <string name="android_version">Guest Android version</string>
     <string name="memory_mb">Memory (MB)</string>
@@ -41,6 +43,14 @@
     <string name="guest_image">Guest image</string>
     <string name="guest_image_none">No guest image imported</string>
     <string name="guest_image_selected">Guest image selected: %1$s</string>
+    <string name="guest_manifest_none">No guest-image manifest imported</string>
+    <string name="guest_manifest_selected">Guest-image manifest selected: %1$s</string>
+    <string name="action_import_kernel">Import guest kernel</string>
+    <string name="kernel_none">No guest kernel imported</string>
+    <string name="kernel_selected">Guest kernel selected: %1$s</string>
+    <string name="action_import_initrd">Import guest initrd</string>
+    <string name="initrd_none">No guest initrd imported</string>
+    <string name="initrd_selected">Guest initrd selected: %1$s</string>
     <string name="profile_stopped">Stopped</string>
     <string name="profile_running">Running</string>
     <string name="profile_unavailable">Cannot start yet</string>

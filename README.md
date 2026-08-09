@@ -2,7 +2,7 @@
 
 OpenVM is a local-first, open-source Android VM control plane inspired by the isolation and multi-instance workflow of VMOS. It is written from scratch and does not copy VMOS code, assets, branding, or private services.
 
-> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, materializes selected guest assets into app-private storage, starts a user-supplied QEMU executable through a validated process boundary, exposes a private UNIX-socket framebuffer transport, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. It does not yet bundle QEMU or claim a verified Android guest boot, input, or console.
+> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, validates a strict guest-image manifest against the selected profile and image/boot-artifact digests, materializes selected guest assets into app-private storage, starts a user-supplied QEMU executable through a validated process boundary, exposes a private UNIX-socket framebuffer transport with bounded touch/key input, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. It does not yet bundle QEMU or claim a verified Android guest boot, serial console, or file transfer.
 
 ## Contents
 
@@ -18,11 +18,13 @@ OpenVM is a local-first, open-source Android VM control plane inspired by the is
 
 - VM profile creation and editing with validation for memory, storage, vCPU count, architecture, and guest Android version.
 - Android Storage Access Framework import for a user-selected guest image; OpenVM stores the persisted content URI and materializes a bounded private copy only when a QEMU profile is started. It never uploads the image.
+- Versioned guest-image manifest import with strict JSON, architecture/machine pairing, raw-disk metadata, SHA-256/size verification, and explicit disk-only or kernel-initrd boot contracts.
 - Local JSON configuration import/export.
 - Local append-only history for profile creation, editing, deletion, import, and export.
-- Multiple profile cards with truthful lifecycle states. QEMU starts only after an executable and bootable image are imported; AVF remains explicitly unavailable until its platform adapter is verified. There is no fake “running” state.
+- Multiple profile cards with truthful lifecycle states. QEMU starts only after an executable, manifest, and bootable image are imported; AVF remains explicitly unavailable until its platform adapter is verified. There is no fake “running” state.
 - A process-backed QEMU adapter with ELF/path checks, bounded image and executable materialization, deterministic TCG command construction, serial output capture, stop timeouts, and explicit exit states.
-- A private UNIX-domain VNC/RFB framebuffer transport attached to running QEMU profiles; it is local-only and framebuffer-only, with no guest input or boot-readiness claim.
+- A private UNIX-domain VNC/RFB framebuffer transport attached to running QEMU profiles; it is local-only, renders the guest display, and sends bounded touch/key events without opening a TCP listener. It still makes no boot-readiness claim.
+- Explicit QEMU kernel/initrd argument construction for manifests that select the `kernel-initrd` contract; boot artifacts are size/hash checked, stay app-private, and are never passed through a shell.
 - Backend readiness reporting for Android Virtualization Framework and QEMU asset configuration.
 - Profile/history search with an adjacent regex builder, bounded patterns, supported flags, live validation, and sample matching.
 - Settings for language mode (English, playful Hong Kong-style Cantonese, or bilingual), independent funny-level sliders, emoji decoration, display name, and dark theme.
@@ -41,9 +43,10 @@ Android UI
         ├── AVF adapter boundary (Android 13+ capability check)
         └── QemuRuntimeController
               ├── app-private asset materialization
+              ├── strict guest-image manifest and integrity gate
               ├── deterministic QEMU process lifecycle
               ├── bounded serial diagnostics
-              └── local UNIX-socket VNC framebuffer client
+              └── local UNIX-socket VNC framebuffer client with bounded input
 ```
 
 The boundary is deliberate. Android's VirtualizationService manages crosvm guests, but access depends on device and platform capabilities. QEMU is therefore an explicit user-supplied open-source runtime in this milestone; a normal app must not claim full guest execution without a compatible executable, bootable image, display transport, permissions, and runtime verification.
@@ -71,13 +74,21 @@ The signing workflow builds the release APK/AAB outputs, signs them only inside 
 
 ## Security boundary
 
-OpenVM is local-first and has no account or telemetry service. Guest images can execute code, so importing an image is an explicit user action. The QEMU adapter enforces profile resource bounds, collision-resistant private asset paths, bounded copying, lifecycle cleanup, and explicit process errors; its VNC framebuffer transport uses a private UNIX-domain socket and never opens a TCP listener. It does not grant the guest additional Android permissions.
+OpenVM is local-first and has no account or telemetry service. Guest images, boot
+artifacts, and the imported QEMU executable are user-supplied code, so importing
+them is an explicit user action and they run with the OpenVM process permissions.
+The QEMU adapter enforces profile resource bounds, collision-resistant private asset
+paths, bounded copying, manifest/image/kernel/initrd integrity, lifecycle cleanup,
+and explicit process errors; its VNC framebuffer transport uses a private UNIX-domain
+socket and never opens a TCP listener. It does not grant the guest additional Android
+permissions.
 
 Do not open issues or pull requests containing private keystores, passwords, access tokens, or guest images. Report security issues through the process in [SECURITY.md](SECURITY.md).
 
 ## Project documentation
 
 - [VM profiles](docs/features/vm-profiles.md)
+- [Guest-image manifest](docs/features/guest-image-manifest.md)
 - [QEMU runtime adapter](docs/features/qemu-runtime.md)
 - [Search and regex builder](docs/features/search-and-regex.md)
 - [APK signing](docs/ci/apk-signing.md)

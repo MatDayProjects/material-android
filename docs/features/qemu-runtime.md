@@ -12,13 +12,16 @@ not treated as proof that Android has booted.
 2. Select **QEMU** as the runtime backend.
 3. Import an Android-compatible QEMU executable. It must be an ELF executable
    for the device's host ABI; OpenVM does not download or bundle an opaque binary.
-4. Import a bootable raw guest disk image.
-5. Select **Start**.
+4. Import a version-1 [guest-image manifest](guest-image-manifest.md).
+5. Import a bootable raw guest disk image whose size and SHA-256 match the manifest.
+6. If the manifest uses `kernel-initrd`, import the kernel and initrd files whose
+   size and SHA-256 match the manifest metadata.
+7. Select **Start**.
 
-OpenVM copies the selected executable and image from their Storage Access Framework
-URI into `files/runtime-assets/`. Each copy is bounded, SHA-256 hashed, written to a
-temporary file, and atomically committed. The QEMU controller accepts only regular
-files inside that app-private directory.
+OpenVM copies the selected executable, image, and optional boot artifacts from their
+Storage Access Framework URIs into `files/runtime-assets/`. Each copy is bounded,
+SHA-256 hashed, written to a unique temporary sibling, and atomically committed. The
+QEMU controller accepts only regular files inside that app-private directory.
 
 ## Command contract
 
@@ -28,12 +31,14 @@ the profile's memory and vCPU limits and selects a portable TCG machine:
 - `x86_64`: `q35,accel=tcg`
 - `arm64-v8a`: `virt,accel=tcg`
 
-The guest image is attached as a raw virtio disk. The command uses `-display none`,
+The guest image is attached as a raw virtio disk. A `kernel-initrd` contract adds
+the selected kernel, initrd, and bounded command line explicitly. The command uses `-display none`,
 `-serial stdio`, `-monitor none`, and `-no-reboot`; when the profile is running it
 also adds `-vnc unix:<app-private-socket>`. The Android client accepts only RFB 3.8
 with the unauthenticated raw encoding, bounds framebuffer dimensions and rectangle
-counts, and never opens a TCP listener. It currently renders framebuffer updates;
-touch, keyboard, clipboard, and guest boot readiness remain separate work. The
+counts, and never opens a TCP listener. It renders framebuffer updates and sends
+bounded touch/key events over the same local channel; clipboard, serial console,
+file transfer, and guest boot readiness remain separate work. The
 option meanings follow [QEMU's system-emulation documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html)
 and [QEMU's VNC security guidance](https://www.qemu.org/docs/master/system/vnc-security.html).
 
@@ -74,7 +79,12 @@ because the device API level is new enough.
   private UNIX-display command construction, unsupported architectures, private-path
   enforcement, cancellation before process start, and natural process exit.
 - `RfbClientTest` covers fragmented-safe protocol reads, raw ARGB framebuffer decoding,
-  unsupported encodings, and oversized framebuffer rejection.
+  unsupported encodings, oversized framebuffer/update rejection, and key/pointer
+  packet construction.
+- `GuestImageManifestTest` covers strict schema parsing, duplicate/unknown-field
+  rejection, architecture/machine compatibility, path safety, and image integrity
+  metadata.
+- `QemuRuntimeControllerTest` covers kernel/initrd/command-line argument construction.
 - `RuntimeAssetStoreTest` runs on the API 37 `Pixel_10_Pro_XL` emulator and verifies
   copy, hash, size, app-private placement, and collision-resistant profile paths.
 - `MainActivitySmokeTest` runs on the same emulator and verifies the profile editor
@@ -85,7 +95,7 @@ on that emulator:
 
 ![OpenVM API 37 runtime backend surface](evidence/qemu-runtime-api37.png)
 
-The repository does not yet ship a QEMU binary, guest-image manifest, input/console
-transport, or verified Android guest boot. The next runtime milestone must build and
-package a reproducible QEMU target, define the image contract, and verify a real
-Android guest before claiming VMOS-level feature parity.
+The repository does not yet ship a QEMU binary, serial-console presentation,
+file-transfer transport, or verified Android guest boot. The next runtime milestone
+must build and package a reproducible QEMU target and verify a real Android guest
+before claiming VMOS-level feature parity.

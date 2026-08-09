@@ -22,8 +22,11 @@ data class VmProfile(
     val storageGb: Int = 16,
     val vcpus: Int = 2,
     val imageUri: String? = null,
+    val guestManifestUri: String? = null,
     val backendId: String = "avf",
     val qemuExecutableUri: String? = null,
+    val kernelUri: String? = null,
+    val initrdUri: String? = null,
     val status: VmStatus = VmStatus.STOPPED,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
@@ -39,6 +42,8 @@ data class VmProfile(
     }
 
     fun imageLabel(): String? = imageUri?.substringAfterLast('/').takeUnless { it.isNullOrBlank() }
+
+    fun guestManifestLabel(): String? = guestManifestUri?.substringAfterLast('/').takeUnless { it.isNullOrBlank() }
 
     /** Lifecycle belongs to the runtime process and must not cross an export or restart. */
     fun restoredForHost(): VmProfile = if (status == VmStatus.STOPPED) this else copy(status = VmStatus.STOPPED)

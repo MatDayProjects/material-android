@@ -35,6 +35,26 @@ class QemuRuntimeControllerTest {
     }
 
     @Test
+    fun kernelInitrdCommandUsesExplicitBootArtifacts() {
+        val profile = VmProfile(name = "boot", architecture = "arm64-v8a")
+        val kernel = java.io.File("runtime", "Image")
+        val initrd = java.io.File("runtime", "ramdisk.img")
+
+        val command = builder.build(
+            profile,
+            java.io.File("qemu-system-aarch64"),
+            java.io.File("guest.img"),
+            bootArtifacts = GuestBootArtifacts(kernel, initrd, "console=ttyAMA0 androidboot.hardware=openvm"),
+        )
+
+        assertTrue(command.containsAll(listOf(
+            "-kernel", kernel.absolutePath,
+            "-initrd", initrd.absolutePath,
+            "-append", "console=ttyAMA0 androidboot.hardware=openvm",
+        )))
+    }
+
+    @Test
     fun armCommandUsesVirtMachine() {
         val profile = VmProfile(name = "arm", architecture = "arm64-v8a")
 
@@ -137,6 +157,24 @@ class QemuRuntimeControllerTest {
         assertTrue(result.message.contains("cancel", ignoreCase = true))
         assertTrue(!starterCalled)
         controller.close()
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun closedControllerRejectsLaterStarts() {
+        val root = Files.createTempDirectory("openvm-runtime-closed").toFile()
+        val executable = root.resolve("qemu-system").apply {
+            writeBytes(fakeX86Elf())
+            setExecutable(true)
+        }
+        val image = root.resolve("guest.img").apply { writeBytes(byteArrayOf(1)) }
+        val controller = QemuRuntimeController(trustedRoot = root)
+        controller.close()
+
+        val result = controller.start(VmProfile(name = "closed", backendId = "qemu"), executable, image)
+
+        assertEquals(RuntimeProcessState.ERROR, result.state)
+        assertTrue(result.message.contains("closed", ignoreCase = true))
         root.deleteRecursively()
     }
 

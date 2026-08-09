@@ -15,7 +15,8 @@ data class RfbFramebuffer(
 /**
  * Small, deliberately bounded RFB 3.8 client for QEMU's local VNC display.
  * Only the raw encoding is accepted; unsupported encodings fail closed instead
- * of silently rendering corrupt guest pixels.
+ * of silently rendering corrupt guest pixels. Input is limited to bounded key and
+ * pointer messages; clipboard and other extensions are intentionally unsupported.
  */
 class RfbClient(
     private val input: InputStream,
@@ -88,11 +89,32 @@ class RfbClient(
         output.flush()
     }
 
+    fun sendKeyEvent(keySymbol: Int, pressed: Boolean) {
+        require(keySymbol in 0..0x7fffffff) { "RFB key symbol is outside the supported range" }
+        output.write(CLIENT_KEY_EVENT)
+        output.write(if (pressed) 1 else 0)
+        output.write(ByteArray(2))
+        writeInt32(keySymbol.toLong())
+        output.flush()
+    }
+
+    fun sendPointerEvent(x: Int, y: Int, buttonMask: Int = 0) {
+        require(width > 0 && height > 0) { "RFB pointer events require a completed handshake" }
+        require(x in 0 until width && y in 0 until height) { "RFB pointer coordinates are outside the framebuffer" }
+        require(buttonMask in 0..0xff) { "RFB pointer button mask is outside the supported range" }
+        output.write(CLIENT_POINTER_EVENT)
+        output.write(buttonMask)
+        writeUnsignedShort(x)
+        writeUnsignedShort(y)
+        output.flush()
+    }
+
     private fun readFramebufferUpdate(): RfbFramebuffer? {
         readBytes(1)
         val rectangleCount = readUnsignedShort()
         require(rectangleCount <= MAX_RECTANGLES) { "VNC update contains too many rectangles" }
         var changed = false
+        var updatePixels = 0L
         repeat(rectangleCount) {
             val x = readUnsignedShort()
             val y = readUnsignedShort()
@@ -103,6 +125,8 @@ class RfbClient(
             }
             val encoding = readInt32()
             require(encoding == ENCODING_RAW) { "Unsupported VNC rectangle encoding: $encoding" }
+            updatePixels += rectangleWidth.toLong() * rectangleHeight
+            require(updatePixels <= MAX_UPDATE_PIXELS) { "VNC update contains too many pixels" }
             repeat(rectangleHeight) { row ->
                 val destinationOffset = (y + row) * width + x
                 repeat(rectangleWidth) { column ->
@@ -191,8 +215,11 @@ class RfbClient(
         private const val CLIENT_SET_PIXEL_FORMAT = 0
         private const val CLIENT_SET_ENCODINGS = 2
         private const val CLIENT_FRAMEBUFFER_UPDATE_REQUEST = 3
+        private const val CLIENT_KEY_EVENT = 4
+        private const val CLIENT_POINTER_EVENT = 5
         private const val MAX_DIMENSION = 4096
         private const val MAX_PIXELS = 16_777_216L
+        private const val MAX_UPDATE_PIXELS = MAX_PIXELS
         private const val MAX_RECTANGLES = 4096
         private const val MAX_NAME_BYTES = 1024L * 1024L
         private const val MAX_CUT_TEXT_BYTES = 1024L * 1024L

@@ -28,11 +28,16 @@ class RuntimeAssetStore(
 ) {
     private val root = File(context.filesDir, "runtime-assets")
     private val images = File(root, "guest-images")
+    private val manifests = File(root, "guest-manifests")
     private val executables = File(root, "executables")
+    private val bootArtifacts = File(root, "boot-artifacts")
     private val displaySockets = File(root, "display")
 
     fun materializeGuestImage(profileId: String, uri: Uri, maxBytes: Long): MaterializedRuntimeAsset =
         materialize(uri, File(images, "${safeName(profileId)}.img"), maxBytes)
+
+    fun materializeGuestManifest(profileId: String, uri: Uri, maxBytes: Long = GuestImageManifest.MAX_JSON_BYTES.toLong()): MaterializedRuntimeAsset =
+        materialize(uri, File(manifests, "${safeName(profileId)}.json"), maxBytes)
 
     fun materializeQemuExecutable(profileId: String, uri: Uri, maxBytes: Long = MAX_EXECUTABLE_BYTES): MaterializedRuntimeAsset =
         materialize(uri, File(executables, "${safeName(profileId)}-qemu-system"), maxBytes).also {
@@ -40,6 +45,12 @@ class RuntimeAssetStore(
                 throw IOException("The imported QEMU executable could not be marked executable")
             }
         }
+
+    fun materializeKernel(profileId: String, uri: Uri, maxBytes: Long = MAX_BOOT_ARTIFACT_BYTES): MaterializedRuntimeAsset =
+        materialize(uri, File(bootArtifacts, "${safeName(profileId)}-kernel"), maxBytes)
+
+    fun materializeInitrd(profileId: String, uri: Uri, maxBytes: Long = MAX_BOOT_ARTIFACT_BYTES): MaterializedRuntimeAsset =
+        materialize(uri, File(bootArtifacts, "${safeName(profileId)}-initrd"), maxBytes)
 
     fun existingGuestImage(profileId: String): File = File(images, "${safeName(profileId)}.img")
 
@@ -62,8 +73,10 @@ class RuntimeAssetStore(
         require(maxBytes > 0) { "The runtime asset limit must be positive" }
         destination.parentFile?.mkdirs()
         require(destination.parentFile?.isDirectory == true) { "The runtime asset directory could not be created" }
-        val temporary = File(destination.parentFile, ".${destination.name}.partial")
-        if (temporary.exists()) temporary.delete()
+        // A fixed partial path lets two picker callbacks delete or overwrite each
+        // other's copy. A unique sibling keeps each materialization independently
+        // recoverable until its atomic replacement commits.
+        val temporary = File.createTempFile(".${destination.name}-", ".partial", destination.parentFile)
 
         var total = 0L
         var zeroReads = 0
@@ -138,5 +151,6 @@ class RuntimeAssetStore(
         private const val COPY_BUFFER_BYTES = 1024 * 1024
         private const val MAX_ZERO_READS = 8
         const val MAX_EXECUTABLE_BYTES = 512L * 1024L * 1024L
+        const val MAX_BOOT_ARTIFACT_BYTES = 512L * 1024L * 1024L
     }
 }

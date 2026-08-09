@@ -32,6 +32,32 @@ class RfbClientTest {
         assertEquals(0xffff0000.toInt(), client.readFrame()?.pixels?.single())
     }
 
+    @Test
+    fun inputMessagesUseBoundedRfbKeyAndPointerFormats() {
+        val output = ByteArrayOutputStream()
+        val client = RfbClient(ByteArrayInputStream(server(width = 2, height = 2, encoding = 0)), output)
+        client.handshake()
+        output.reset()
+
+        client.sendKeyEvent(0x41, pressed = true)
+        client.sendPointerEvent(x = 1, y = 0, buttonMask = 1)
+
+        assertArrayEquals(
+            byteArrayOf(
+                4, 1, 0, 0, 0, 0, 0, 0x41,
+                5, 1, 0, 1, 0, 0,
+            ),
+            output.toByteArray(),
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun pointerInputOutsideFramebufferIsRejected() {
+        val client = RfbClient(ByteArrayInputStream(server(width = 1, height = 1, encoding = 0)), ByteArrayOutputStream())
+        client.handshake()
+        client.sendPointerEvent(x = 1, y = 0)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun unsupportedEncodingFailsClosed() {
         val client = RfbClient(ByteArrayInputStream(server(width = 1, height = 1, encoding = 1)), ByteArrayOutputStream())

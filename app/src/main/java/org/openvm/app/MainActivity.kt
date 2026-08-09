@@ -7,12 +7,14 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -36,6 +38,7 @@ import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import org.openvm.app.backend.BackendReadiness
+import org.openvm.app.backend.GuestBootArtifacts
 import org.openvm.app.backend.QemuRuntimeController
 import org.openvm.app.backend.RuntimeBackendRegistry
 import org.openvm.app.backend.RuntimeProcessSnapshot
@@ -49,6 +52,8 @@ import org.openvm.app.settings.LanguageMode
 import org.openvm.app.settings.OpenVmSettings
 import org.openvm.app.settings.SettingsStore
 import org.openvm.app.runtime.RfbFramebuffer
+import org.openvm.app.runtime.GuestImageManifest
+import org.openvm.app.runtime.GuestImageManifestLoader
 import org.openvm.app.runtime.RuntimeAssetStore
 import org.openvm.app.runtime.VncDisplayClient
 import org.openvm.app.ui.Copy
@@ -58,6 +63,8 @@ import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
@@ -69,7 +76,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsStore: SettingsStore
     private lateinit var backendRegistry: RuntimeBackendRegistry
     private lateinit var runtimeAssetStore: RuntimeAssetStore
-    private lateinit var qemuRuntimeController: QemuRuntimeController
+    private val qemuRuntimeController: QemuRuntimeController
+        get() = (application as OpenVmApplication).qemuRuntimeController
 
     private var settings = OpenVmSettings()
     private var activeTab = TAB_PROFILES
@@ -84,11 +92,27 @@ class MainActivity : AppCompatActivity() {
     private var historyRegexFlags = ""
     private var pendingImageUri: String? = null
     private var activeImageLabel: TextView? = null
+    private var pendingGuestManifestUri: String? = null
+    private var activeGuestManifestLabel: TextView? = null
     private var pendingQemuExecutableUri: String? = null
     private var activeQemuExecutableLabel: TextView? = null
+    private var pendingKernelUri: String? = null
+    private var activeKernelLabel: TextView? = null
+    private var pendingInitrdUri: String? = null
+    private var activeInitrdLabel: TextView? = null
     private val displayClients = mutableMapOf<String, VncDisplayClient>()
     private val displayViews = mutableMapOf<String, ImageView>()
-    private val pendingStarts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val displaySizes = mutableMapOf<String, Pair<Int, Int>>()
+    private val displayPointerButtons = mutableMapOf<String, Int>()
+    private val displayPointerCoordinates = mutableMapOf<String, Pair<Int, Int>>()
+    private val startGenerations = ConcurrentHashMap<String, Long>()
+    private val nextStartGeneration = AtomicLong(0L)
+
+    private fun uriDisplayName(uri: Uri): String = runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0).takeUnless { it.isNullOrBlank() } else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')?.takeUnless { it.isBlank() } ?: uri.toString()
 
     private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -96,7 +120,7 @@ class MainActivity : AppCompatActivity() {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         pendingImageUri = uri.toString()
-        activeImageLabel?.text = getString(R.string.guest_image_selected, uri.lastPathSegment ?: uri.toString())
+        activeImageLabel?.text = getString(R.string.guest_image_selected, uriDisplayName(uri))
     }
 
     private val qemuExecutablePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -107,8 +131,38 @@ class MainActivity : AppCompatActivity() {
         pendingQemuExecutableUri = uri.toString()
         activeQemuExecutableLabel?.text = getString(
             R.string.qemu_executable_selected,
-            uri.lastPathSegment ?: uri.toString(),
+            uriDisplayName(uri),
         )
+    }
+
+    private val guestManifestPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        pendingGuestManifestUri = uri.toString()
+        activeGuestManifestLabel?.text = getString(
+            R.string.guest_manifest_selected,
+            uriDisplayName(uri),
+        )
+    }
+
+    private val kernelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        pendingKernelUri = uri.toString()
+        activeKernelLabel?.text = getString(R.string.kernel_selected, uriDisplayName(uri))
+    }
+
+    private val initrdPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        pendingInitrdUri = uri.toString()
+        activeInitrdLabel?.text = getString(R.string.initrd_selected, uriDisplayName(uri))
     }
 
     private val configurationPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -145,9 +199,9 @@ class MainActivity : AppCompatActivity() {
         settingsStore = SettingsStore(applicationContext)
         backendRegistry = RuntimeBackendRegistry(applicationContext)
         runtimeAssetStore = RuntimeAssetStore(applicationContext)
-        qemuRuntimeController = QemuRuntimeController(applicationContext)
         settings = settingsStore.read()
         AppCompatDelegate.setDefaultNightMode(if (settings.darkTheme) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO)
+        syncRuntimeState()
         buildShell()
         renderCurrentTab()
     }
@@ -156,8 +210,22 @@ class MainActivity : AppCompatActivity() {
         displayClients.values.forEach(VncDisplayClient::close)
         displayClients.clear()
         displayViews.clear()
-        if (::qemuRuntimeController.isInitialized) qemuRuntimeController.close()
+        displaySizes.clear()
+        displayPointerButtons.clear()
+        displayPointerCoordinates.clear()
+        startGenerations.clear()
         super.onDestroy()
+    }
+
+    private fun syncRuntimeState() {
+        profileStore.profiles.value.forEach { profile ->
+            when (qemuRuntimeController.snapshot(profile.id).state) {
+                RuntimeProcessState.RUNNING -> profileStore.updateStatus(profile.id, VmStatus.RUNNING)
+                RuntimeProcessState.STARTING -> profileStore.updateStatus(profile.id, VmStatus.STARTING)
+                RuntimeProcessState.STOPPING -> profileStore.updateStatus(profile.id, VmStatus.STOPPING)
+                else -> Unit
+            }
+        }
     }
 
     private fun buildShell() {
@@ -231,6 +299,18 @@ class MainActivity : AppCompatActivity() {
             },
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
+        rebindRunningDisplays()
+    }
+
+    private fun rebindRunningDisplays() {
+        if (activeTab != TAB_PROFILES) return
+        profileStore.profiles.value
+            .filter { it.status == VmStatus.RUNNING }
+            .forEach { profile ->
+                qemuRuntimeController.snapshot(profile.id).displaySocketPath?.let { socketPath ->
+                    startDisplayClient(profile.id, socketPath)
+                }
+            }
     }
 
     private fun buildProfilesPage(): View {
@@ -354,14 +434,32 @@ class MainActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
             setPadding(0, dp(2), 0, 0)
         })
+        body.addView(TextView(this).apply {
+            text = profile.guestManifestLabel()?.let { getString(R.string.guest_manifest_selected, it) }
+                ?: getString(R.string.guest_manifest_none)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
+            setPadding(0, dp(2), 0, 0)
+        })
         if (profile.status == VmStatus.RUNNING) {
-            body.addView(ImageView(this).apply {
+            val display = ImageView(this).apply {
                 minimumHeight = dp(220)
                 setBackgroundColor(Color.BLACK)
                 scaleType = ImageView.ScaleType.FIT_CENTER
+                isFocusable = true
+                isFocusableInTouchMode = true
+                isClickable = true
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 contentDescription = getString(R.string.guest_display, profile.name)
-                displayViews[profile.id] = this
-            }, fullWidthParams(top = 8, bottom = 4))
+                setOnClickListener {
+                    requestFocus()
+                    announceForAccessibility(getString(R.string.guest_display_focus))
+                }
+            }
+            displayViews[profile.id] = display
+            display.setOnTouchListener { view, event -> handleDisplayTouch(profile.id, view, event) }
+            display.setOnKeyListener { view, keyCode, event -> handleDisplayKey(profile.id, view, keyCode, event) }
+            body.addView(display, fullWidthParams(top = 8, bottom = 4))
         }
 
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, dp(8), 0, 0) }
@@ -381,7 +479,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleRuntimeAction(profile: VmProfile) {
-        if (profile.status == VmStatus.STARTING && profile.backendId == "qemu" && pendingStarts.remove(profile.id)) {
+        if (profile.status == VmStatus.STARTING && profile.backendId == "qemu" && startGenerations.remove(profile.id) != null) {
             profileStore.updateStatus(profile.id, VmStatus.STOPPED)
             renderCurrentTab()
             showMessage("QEMU start cancelled before the process launched")
@@ -409,43 +507,73 @@ class MainActivity : AppCompatActivity() {
             showMessage(message)
             return
         }
-        if (profile.imageUri.isNullOrBlank() || profile.qemuExecutableUri.isNullOrBlank()) {
+        if (profile.imageUri.isNullOrBlank() || profile.qemuExecutableUri.isNullOrBlank() || profile.guestManifestUri.isNullOrBlank()) {
             showMessage(backendRegistry.startReadiness(profile))
             return
         }
         profileStore.updateStatus(profile.id, VmStatus.STARTING)
         renderCurrentTab()
         showMessage("Validating guest image and starting QEMU")
-        pendingStarts.add(profile.id)
+        val generation = nextStartGeneration.incrementAndGet()
+        startGenerations[profile.id] = generation
+        fun isCurrentStart(): Boolean = startGenerations[profile.id] == generation
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                val manifest = runtimeAssetStore.materializeGuestManifest(
+                    profile.id,
+                    Uri.parse(profile.guestManifestUri),
+                ).file.readBytes().let(GuestImageManifestLoader::load)
+                    .requireCompatibleWith(profile)
+                if (!isCurrentStart()) return@launch
                 val image = runtimeAssetStore.materializeGuestImage(
                     profile.id,
                     Uri.parse(profile.imageUri),
                     profile.storageGb.toLong() * 1024L * 1024L * 1024L,
                 )
-                if (!pendingStarts.contains(profile.id)) return@launch
+                manifest.requireImageMatch(image)
+                if (!isCurrentStart()) return@launch
                 val executable = runtimeAssetStore.materializeQemuExecutable(profile.id, Uri.parse(profile.qemuExecutableUri))
-                if (!pendingStarts.contains(profile.id)) return@launch
+                if (!isCurrentStart()) return@launch
+                val bootArtifacts = if (manifest.bootContract == GuestImageManifest.BOOT_CONTRACT_KERNEL_INITRD) {
+                    val kernelUri = profile.kernelUri ?: error("The manifest requires a guest kernel")
+                    val initrdUri = profile.initrdUri ?: error("The manifest requires a guest initrd")
+                    val kernel = runtimeAssetStore.materializeKernel(profile.id, Uri.parse(kernelUri))
+                    val initrd = runtimeAssetStore.materializeInitrd(profile.id, Uri.parse(initrdUri))
+                    manifest.requireKernelMatch(kernel)
+                    manifest.requireInitrdMatch(initrd)
+                    GuestBootArtifacts(kernel.file, initrd.file, manifest.kernelCommandLine)
+                } else {
+                    null
+                }
+                if (!isCurrentStart()) return@launch
                 val displaySocket = runtimeAssetStore.prepareDisplaySocket(profile.id)
+                val listenerApplied = java.util.concurrent.atomic.AtomicBoolean(false)
                 val started = qemuRuntimeController.start(
                     profile,
                     executable.file,
                     image.file,
                     displaySocket,
-                    listener = { snapshot -> runOnUiThread { applyRuntimeSnapshot(snapshot) } },
-                    shouldStart = { pendingStarts.contains(profile.id) },
+                    listener = { snapshot ->
+                        if (isCurrentStart()) {
+                            listenerApplied.set(true)
+                            runOnUiThread { if (isCurrentStart()) applyRuntimeSnapshot(snapshot) }
+                        }
+                    },
+                    shouldStart = { isCurrentStart() },
+                    bootArtifacts = bootArtifacts,
                 )
-                withContext(Dispatchers.Main) { applyRuntimeSnapshot(started) }
+                withContext(Dispatchers.Main) {
+                    if (isCurrentStart() && !listenerApplied.get()) applyRuntimeSnapshot(started)
+                }
             } catch (error: Throwable) {
-                if (!pendingStarts.contains(profile.id)) return@launch
+                if (!isCurrentStart()) return@launch
                 withContext(Dispatchers.Main) {
                     profileStore.updateStatus(profile.id, VmStatus.ERROR)
                     renderCurrentTab()
                     showError(error.message ?: "The guest runtime could not be prepared")
                 }
             } finally {
-                pendingStarts.remove(profile.id)
+                startGenerations.remove(profile.id, generation)
             }
         }
     }
@@ -483,7 +611,10 @@ class MainActivity : AppCompatActivity() {
         displayClients[profileId] = client
         client.start(
             onFrame = { frame ->
-                runOnUiThread { displayViews[profileId]?.setImageBitmap(frame.toBitmap()) }
+                runOnUiThread {
+                    displaySizes[profileId] = frame.width to frame.height
+                    displayViews[profileId]?.setImageBitmap(frame.toBitmap())
+                }
             },
             onError = { message ->
                 runOnUiThread {
@@ -492,11 +623,101 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             },
+            onDisconnected = {
+                runOnUiThread {
+                    if (displayClients[profileId] === client) {
+                        displayClients.remove(profileId)
+                        displaySizes.remove(profileId)
+                        displayPointerButtons.remove(profileId)
+                        displayPointerCoordinates.remove(profileId)
+                        if (profileStore.profiles.value.any { it.id == profileId && it.status == VmStatus.RUNNING }) {
+                            showError("Guest display disconnected")
+                        }
+                    }
+                }
+            },
         )
     }
 
     private fun closeDisplayClient(profileId: String) {
         displayClients.remove(profileId)?.close()
+        displaySizes.remove(profileId)
+        displayPointerButtons.remove(profileId)
+        displayPointerCoordinates.remove(profileId)
+    }
+
+    private fun handleDisplayTouch(profileId: String, view: View, event: MotionEvent): Boolean {
+        val client = displayClients[profileId] ?: return false
+        val size = displaySizes[profileId] ?: return false
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) view.requestFocus()
+        val coordinates = displayCoordinates(view, event.x, event.y, size.first, size.second)
+        if (coordinates == null) {
+            if (event.actionMasked == MotionEvent.ACTION_MOVE && displayPointerButtons[profileId] != 0) {
+                displayPointerButtons[profileId] = 0
+                displayPointerCoordinates.remove(profileId)?.let { client.sendPointerEvent(it.first, it.second, 0) }
+            } else if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                displayPointerButtons.remove(profileId)?.let {
+                    displayPointerCoordinates.remove(profileId)?.let { point -> client.sendPointerEvent(point.first, point.second, 0) }
+                }
+            }
+            return true
+        }
+        val buttons = when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> 1
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> 0
+            MotionEvent.ACTION_MOVE -> displayPointerButtons[profileId] ?: 0
+            else -> return false
+        }
+        displayPointerButtons[profileId] = buttons
+        displayPointerCoordinates[profileId] = coordinates
+        if (buttons == 0) displayPointerCoordinates.remove(profileId)
+        client.sendPointerEvent(coordinates.first, coordinates.second, buttons)
+        return true
+    }
+
+    private fun handleDisplayKey(profileId: String, view: View, keyCode: Int, event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
+        val keySymbol = x11KeySymbol(keyCode, event) ?: return false
+        view.requestFocus()
+        return displayClients[profileId]?.sendKeyEvent(keySymbol, event.action == KeyEvent.ACTION_DOWN) ?: false
+    }
+
+    private fun displayCoordinates(view: View, x: Float, y: Float, width: Int, height: Int): Pair<Int, Int>? {
+        if (view.width <= 0 || view.height <= 0 || width <= 0 || height <= 0) return null
+        val scale = minOf(view.width.toFloat() / width, view.height.toFloat() / height)
+        val left = (view.width - width * scale) / 2f
+        val top = (view.height - height * scale) / 2f
+        val right = left + width * scale
+        val bottom = top + height * scale
+        if (x < left || x > right || y < top || y > bottom) return null
+        val guestX = ((x - left) / scale).roundToInt().coerceIn(0, width - 1)
+        val guestY = ((y - top) / scale).roundToInt().coerceIn(0, height - 1)
+        return guestX to guestY
+    }
+
+    private fun x11KeySymbol(keyCode: Int, event: KeyEvent): Int? = when (keyCode) {
+        KeyEvent.KEYCODE_ENTER -> 0xff0d
+        KeyEvent.KEYCODE_DEL -> 0xff08
+        KeyEvent.KEYCODE_TAB -> 0xff09
+        KeyEvent.KEYCODE_ESCAPE -> 0xff1b
+        KeyEvent.KEYCODE_DPAD_LEFT -> 0xff51
+        KeyEvent.KEYCODE_DPAD_UP -> 0xff52
+        KeyEvent.KEYCODE_DPAD_RIGHT -> 0xff53
+        KeyEvent.KEYCODE_DPAD_DOWN -> 0xff54
+        KeyEvent.KEYCODE_HOME -> 0xff50
+        KeyEvent.KEYCODE_MOVE_END -> 0xff57
+        KeyEvent.KEYCODE_PAGE_UP -> 0xff55
+        KeyEvent.KEYCODE_PAGE_DOWN -> 0xff56
+        KeyEvent.KEYCODE_SPACE -> 0x20
+        KeyEvent.KEYCODE_SHIFT_LEFT -> 0xffe1
+        KeyEvent.KEYCODE_SHIFT_RIGHT -> 0xffe2
+        KeyEvent.KEYCODE_CTRL_LEFT -> 0xffe3
+        KeyEvent.KEYCODE_CTRL_RIGHT -> 0xffe4
+        KeyEvent.KEYCODE_ALT_LEFT -> 0xffe9
+        KeyEvent.KEYCODE_ALT_RIGHT -> 0xffea
+        KeyEvent.KEYCODE_META_LEFT -> 0xffe7
+        KeyEvent.KEYCODE_META_RIGHT -> 0xffe8
+        else -> event.getUnicodeChar(event.metaState).takeIf { it in 0x20..0x10ffff }
     }
 
     private fun RfbFramebuffer.toBitmap(): Bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
@@ -551,10 +772,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun showProfileEditor(existing: VmProfile?) {
         pendingImageUri = existing?.imageUri
+        pendingGuestManifestUri = existing?.guestManifestUri
         pendingQemuExecutableUri = existing?.qemuExecutableUri
+        pendingKernelUri = existing?.kernelUri
+        pendingInitrdUri = existing?.initrdUri
         val form = ScrollView(this)
         val column = column().apply { setPadding(dp(4), 0, dp(4), 0) }
         form.addView(column)
+        form.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (resources.displayMetrics.heightPixels * 0.55f).roundToInt(),
+        )
         val name = input(getString(R.string.profile_name), existing?.name.orEmpty(), InputType.TYPE_CLASS_TEXT)
         val androidVersion = input(getString(R.string.android_version), existing?.androidVersion ?: "Android 14", InputType.TYPE_CLASS_TEXT)
         val memory = input(getString(R.string.memory_mb), (existing?.memoryMb ?: 2048).toString(), InputType.TYPE_CLASS_NUMBER)
@@ -584,8 +812,21 @@ class MainActivity : AppCompatActivity() {
             text = getString(R.string.action_import_image)
             setOnClickListener { imagePicker.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
         })
+        val manifestLabel = TextView(this).apply {
+            text = pendingGuestManifestUri?.let { getString(R.string.guest_manifest_selected, uriDisplayName(Uri.parse(it))) }
+                ?: getString(R.string.guest_manifest_none)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        activeGuestManifestLabel = manifestLabel
+        column.addView(manifestLabel)
+        column.addView(MaterialButton(this).apply {
+            text = getString(R.string.action_import_manifest)
+            setOnClickListener { guestManifestPicker.launch(arrayOf("application/json", "text/json", "text/plain", "*/*")) }
+        })
         val qemuLabel = TextView(this).apply {
-            text = pendingQemuExecutableUri?.let { getString(R.string.qemu_executable_selected, Uri.parse(it).lastPathSegment ?: it) }
+            text = pendingQemuExecutableUri?.let { getString(R.string.qemu_executable_selected, uriDisplayName(Uri.parse(it))) }
                 ?: getString(R.string.qemu_executable_none)
             textSize = 13f
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
@@ -597,6 +838,32 @@ class MainActivity : AppCompatActivity() {
             text = getString(R.string.action_import_qemu)
             setOnClickListener { qemuExecutablePicker.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
         })
+        val kernelLabel = TextView(this).apply {
+            text = pendingKernelUri?.let { getString(R.string.kernel_selected, uriDisplayName(Uri.parse(it))) }
+                ?: getString(R.string.kernel_none)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        activeKernelLabel = kernelLabel
+        column.addView(kernelLabel)
+        column.addView(MaterialButton(this).apply {
+            text = getString(R.string.action_import_kernel)
+            setOnClickListener { kernelPicker.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
+        })
+        val initrdLabel = TextView(this).apply {
+            text = pendingInitrdUri?.let { getString(R.string.initrd_selected, uriDisplayName(Uri.parse(it))) }
+                ?: getString(R.string.initrd_none)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.openvm_secondary))
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        activeInitrdLabel = initrdLabel
+        column.addView(initrdLabel)
+        column.addView(MaterialButton(this).apply {
+            text = getString(R.string.action_import_initrd)
+            setOnClickListener { initrdPicker.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
+        })
 
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(existing?.let { "Edit ${it.name}" } ?: getString(R.string.action_create_profile))
@@ -605,6 +872,11 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.action_save, null)
             .create()
         dialog.setOnShowListener {
+            form.post {
+                form.layoutParams = form.layoutParams.apply {
+                    height = (resources.displayMetrics.heightPixels * 0.42f).roundToInt()
+                }
+            }
             dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val draft = runCatching {
                     val profile = (existing ?: VmProfile(name = name.editText?.text?.toString().orEmpty())).copy(
@@ -614,8 +886,11 @@ class MainActivity : AppCompatActivity() {
                         storageGb = storage.editText?.text?.toString()?.toIntOrNull() ?: -1,
                         vcpus = vcpus.editText?.text?.toString()?.toIntOrNull() ?: -1,
                         imageUri = pendingImageUri,
+                        guestManifestUri = pendingGuestManifestUri,
                         backendId = if (backendInput.text?.toString() == backendChoices[1]) "qemu" else "avf",
                         qemuExecutableUri = pendingQemuExecutableUri,
+                        kernelUri = pendingKernelUri,
+                        initrdUri = pendingInitrdUri,
                         updatedAt = System.currentTimeMillis(),
                     )
                     profile
@@ -634,7 +909,10 @@ class MainActivity : AppCompatActivity() {
         }
         dialog.setOnDismissListener {
             activeImageLabel = null
+            activeGuestManifestLabel = null
             activeQemuExecutableLabel = null
+            activeKernelLabel = null
+            activeInitrdLabel = null
         }
         dialog.show()
     }

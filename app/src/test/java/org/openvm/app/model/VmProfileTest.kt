@@ -50,11 +50,17 @@ class VmProfileTest {
             name = "QEMU test",
             backendId = "qemu",
             qemuExecutableUri = "content://com.example.documents/qemu-system-x86_64",
+            guestManifestUri = "content://com.example.documents/guest.json",
+            kernelUri = "content://com.example.documents/Image",
+            initrdUri = "content://com.example.documents/ramdisk.img",
         )
 
         assertTrue(profile.validationErrors().isEmpty())
         assertEquals("qemu", profile.backendId)
         assertEquals("content://com.example.documents/qemu-system-x86_64", profile.qemuExecutableUri)
+        assertEquals("content://com.example.documents/guest.json", profile.guestManifestUri)
+        assertEquals("content://com.example.documents/Image", profile.kernelUri)
+        assertEquals("content://com.example.documents/ramdisk.img", profile.initrdUri)
     }
 
     @Test

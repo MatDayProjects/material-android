@@ -35,9 +35,21 @@ fun interface ProcessStarter {
     fun start(command: List<String>, workingDirectory: File): Process
 }
 
+data class GuestBootArtifacts(
+    val kernel: File,
+    val initrd: File,
+    val kernelCommandLine: String? = null,
+)
+
 /** Builds a shell-free, deterministic QEMU command for a raw guest disk image. */
 class QemuCommandBuilder {
-    fun build(profile: VmProfile, executable: File, image: File, displaySocket: File? = null): List<String> {
+    fun build(
+        profile: VmProfile,
+        executable: File,
+        image: File,
+        displaySocket: File? = null,
+        bootArtifacts: GuestBootArtifacts? = null,
+    ): List<String> {
         val machine = when (profile.architecture) {
             "x86_64" -> "q35,accel=tcg"
             "arm64-v8a" -> "virt,accel=tcg"
@@ -55,6 +67,12 @@ class QemuCommandBuilder {
             "-monitor", "none",
             "-no-reboot",
             ))
+            if (bootArtifacts != null) {
+                addAll(listOf("-kernel", bootArtifacts.kernel.absolutePath, "-initrd", bootArtifacts.initrd.absolutePath))
+                if (!bootArtifacts.kernelCommandLine.isNullOrBlank()) {
+                    addAll(listOf("-append", bootArtifacts.kernelCommandLine))
+                }
+            }
             if (displaySocket != null) addAll(listOf("-vnc", "unix:${displaySocket.absolutePath}"))
         }
     }
@@ -90,16 +108,21 @@ class QemuRuntimeController(
 
     private val running = ConcurrentHashMap<String, RunningProcess>()
     private val snapshots = ConcurrentHashMap<String, RuntimeProcessSnapshot>()
+    @Volatile private var closed = false
 
     fun start(
         profile: VmProfile,
         executable: File,
         image: File,
         displaySocket: File? = null,
+        bootArtifacts: GuestBootArtifacts? = null,
         shouldStart: () -> Boolean = { true },
         listener: (RuntimeProcessSnapshot) -> Unit = {},
     ): RuntimeProcessSnapshot {
         synchronized(running) {
+            if (closed) {
+                return fail(profile.id, "The QEMU runtime controller is closed", listener)
+            }
             val existing = running[profile.id]
             if (existing != null && isAlive(existing.process)) {
                 return snapshots[profile.id]
@@ -114,8 +137,15 @@ class QemuRuntimeController(
             validateAsset(executable, "QEMU executable", mustExecute = true)
             validateElfExecutable(executable)
             validateAsset(image, "Guest image", mustExecute = false)
+            if (bootArtifacts != null) {
+                validateAsset(bootArtifacts.kernel, "Guest kernel", mustExecute = false)
+                validateAsset(bootArtifacts.initrd, "Guest initrd", mustExecute = false)
+                require(bootArtifacts.kernelCommandLine.orEmpty().length <= MAX_KERNEL_COMMAND_LINE_CHARS) {
+                    "Guest kernel command line is too long"
+                }
+            }
             validateDisplaySocket(displaySocket)
-            commandBuilder.build(profile, executable, image, displaySocket)
+            commandBuilder.build(profile, executable, image, displaySocket, bootArtifacts)
         } catch (error: Throwable) {
             return fail(profile.id, error.message ?: "QEMU runtime validation failed", listener)
         }
@@ -198,7 +228,11 @@ class QemuRuntimeController(
         snapshots[profileId] ?: RuntimeProcessSnapshot(profileId, RuntimeProcessState.STOPPED, "QEMU is not running")
 
     override fun close() {
-        running.keys.toList().forEach(::stop)
+        val profileIds = synchronized(running) {
+            closed = true
+            running.keys.toList()
+        }
+        profileIds.forEach(::stop)
         executor.shutdownNow()
     }
 
@@ -362,6 +396,7 @@ class QemuRuntimeController(
         private const val FORCE_STOP_TIMEOUT_MILLIS = 1000L
         private const val POLL_MILLIS = 50L
         private const val MAX_OUTPUT_LINE_CHARS = 16_384
+        private const val MAX_KERNEL_COMMAND_LINE_CHARS = 4096
         private const val ELFCLASS64 = 2
         private const val ELFDATA2LSB = 1
         private val ELF_MAGIC = byteArrayOf(0x7f.toByte(), 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte())

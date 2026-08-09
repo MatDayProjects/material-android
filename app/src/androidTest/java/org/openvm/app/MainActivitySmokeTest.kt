@@ -30,5 +30,6 @@ class MainActivitySmokeTest {
         onView(withText("Create VM profile")).perform(click())
         onView(withText("Android Virtualization Framework")).check(matches(isDisplayed()))
         onView(withText("Import QEMU executable")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText("Import guest-image manifest")).perform(scrollTo()).check(matches(isDisplayed()))
     }
 }
