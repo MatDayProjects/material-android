@@ -233,7 +233,9 @@ jobs:
               -keystore "$keystore_path" \
               -storepass:env ANDROID_KEYSTORE_PASSWORD \
               -alias "$ANDROID_KEY_ALIAS" 2>/dev/null |
-              awk -F': ' '/SHA256:/{gsub(/:/, "", $2); gsub(/[[:space:]]/, "", $2); print tolower($2); exit}'
+              awk -F': ' '/^[[:space:]]*SHA256:/{print $2; exit}' |
+              tr -d '[:space:]:' |
+              tr '[:upper:]' '[:lower:]'
           )"
           if [[ -z "$expected_certificate_digest" ]]; then
             echo "The signing certificate SHA-256 digest could not be read from the keystore." >&2
@@ -298,13 +300,21 @@ jobs:
               exit 1
             fi
 
-            actual_certificate_digests="$(
-              awk -F': ' '/certificate SHA-256 digest:/{gsub(/:/, "", $2); gsub(/[[:space:]]/, "", $2); print tolower($2)}' \
-                "$verifier_output"
+            actual_certificate_digest="$(
+              awk -F': ' '/certificate SHA-256 digest:/{print $2; exit}' \
+                "$verifier_output" |
+                tr -d '[:space:]:' |
+                tr '[:upper:]' '[:lower:]'
             )"
             rm -f -- "$verifier_output"
-            if ! grep -Fqx "$expected_certificate_digest" <<< "$actual_certificate_digests"; then
+            if [[ -z "$actual_certificate_digest" ]]; then
+              echo "apksigner did not report a certificate SHA-256 digest: $artifact_name" >&2
+              exit 1
+            fi
+            if [[ "$actual_certificate_digest" != "$expected_certificate_digest" ]]; then
               echo "Signed release APK certificate does not match the configured signing alias: $artifact_name" >&2
+              echo "Expected public certificate digest: $expected_certificate_digest" >&2
+              echo "Actual public certificate digest: $actual_certificate_digest" >&2
               exit 1
             fi
 
