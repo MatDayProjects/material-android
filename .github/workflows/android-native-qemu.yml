@@ -227,6 +227,15 @@ jobs:
             echo "Android package service did not become ready after 120 seconds" >&2
             exit 1
           fi
+          # Boot completion only means the property flipped; software-only TCG
+          # emulators can still be draining the framework's post-boot work.
+          # Give system_server a bounded settling window before instrumentation
+          # starts, otherwise the target application can be killed by a startup
+          # ANR before the first test is attached.
+          for settle_attempt in $(seq 1 45); do
+            echo "Waiting for software emulator post-boot stabilization (${settle_attempt}/45)"
+            sleep 2
+          done
           timeout --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest connectedDebugAndroidTest
           timeout --signal=TERM 15m ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest connectedDebugAndroidTest
 
