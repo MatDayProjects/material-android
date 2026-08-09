@@ -7,7 +7,8 @@
 - Commit [`52300f7`](https://github.com/MatDayProjects/material-android/commit/52300f74319f74ebea6fc7fbf025b4644df22976)
   contains the complete unsigned-artifact correction, verifier scripts, regression
   tests, workflow staging/context gates, bundletool pin, and documentation. Hosted
-  replacement verification remains pending.
+  replacement verification is green at exact commit
+  [`0153e1c`](https://github.com/MatDayProjects/material-android/commit/0153e1c5a00e63efe1a8679926daa8ace5872a6f).
 - Final artifact inspection found that the Android Gradle Plugin's default debug
   configuration had signed `app-debug.apk` with an auto-generated `Android Debug`
   certificate. That artifact and the earlier debug-signed instrumentation runs are
@@ -44,12 +45,35 @@
   discovery, AAB semantic validation, locale-stable verifier output, and per-job context
   manifests. The review note that the new scripts were not yet tracked is resolved by
   including them in the correction commit rather than staging only pre-existing files.
+- Android CI run [`31327047886`](https://github.com/MatDayProjects/material-android/actions/runs/31327047886)
+  is green. Downloaded artifact
+  [`9041854414`](https://github.com/MatDayProjects/material-android/actions/runs/31327047886/artifacts/9041854414)
+  contains 43 tests with zero failures, errors, or skips and two independently verified
+  unsigned APKs. Their SHA-256 values exactly reproduce the local clean-build debug and
+  instrumentation outputs.
+- Native run [`31327047882`](https://github.com/MatDayProjects/material-android/actions/runs/31327047882)
+  is green. Runtime artifacts `9041954338` and `9041970503` and package artifact
+  [`9042005849`](https://github.com/MatDayProjects/material-android/actions/runs/31327047882/artifacts/9042005849)
+  were downloaded. The app APK is
+  `0e5ffb9b3871413273dbde5cacf0cfa035bfe3b4c23b5b800dd5a45e1b9936ec`;
+  it is unsigned and aligned, contains 43 passing tests beside the explicit
+  instrumentation-skip record, and carries 92 byte-matching runtime entries per ABI.
+- Unsigned release-validation run
+  [`31327061429`](https://github.com/MatDayProjects/material-android/actions/runs/31327061429)
+  is green. Runtime artifacts `9041976158` and `9041932186`, debug artifact
+  [`9042007420`](https://github.com/MatDayProjects/material-android/actions/runs/31327061429/artifacts/9042007420),
+  and release artifact
+  [`9042054147`](https://github.com/MatDayProjects/material-android/actions/runs/31327061429/artifacts/9042054147)
+  were downloaded and independently checked. The release APK is
+  `b3280bba178f737a3bb4b1a18873ce8fb16351a642b4983c50c349f84aeb24ce`;
+  the AAB is `c4cc46568ae8764a35ee14e4fe180dcd46499371a47e51d109726245f3b5e16c`.
+  Both are unsigned, `SHA256SUMS.txt` matches, pinned bundletool validates the AAB, and
+  the APK and AAB each carry 92 byte-matching runtime entries per ABI.
 - Repository-level GitHub Actions secrets are empty, and there is no `signing`
-  environment. The authenticated account cannot inspect the existing `android-release`
-  environment's secret-name inventory (`HTTP 403: Must have admin rights to Repository`),
-  so that names-only external-state audit remains unverified. No workflow references an
-  environment secret or invokes a signing operation.
-- Hosted replacement-run evidence is recorded after the corrected workflows complete.
+  environment. A names-only admin audit found four legacy signing-related entries in
+  the existing `android-release` environment. Their values were not accessed, current
+  workflows do not reference them, and they were not deleted because secret removal was
+  not authorized. No workflow invokes a signing operation.
 
 ## 2026-08-09 · Bounded hosted emulator validation
 

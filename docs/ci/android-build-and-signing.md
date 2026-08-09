@@ -90,6 +90,25 @@ evidence for the current unsigned build. No current workflow proves APK installa
 Android guest boot. The guest boot boundary remains documented separately in [QEMU
 runtime adapter](../features/qemu-runtime.md).
 
+### Hosted correction evidence
+
+The unsigned correction is hosted-verified at exact commit
+[`0153e1c`](https://github.com/MatDayProjects/material-android/commit/0153e1c5a00e63efe1a8679926daa8ace5872a6f):
+
+| Workflow | Run | Downloaded evidence |
+| --- | --- | --- |
+| Android CI | [`31327047886`](https://github.com/MatDayProjects/material-android/actions/runs/31327047886) | Artifact `9041854414`; 43/43 tests; unsigned debug and instrumentation APKs |
+| Android Native QEMU | [`31327047882`](https://github.com/MatDayProjects/material-android/actions/runs/31327047882) | Runtime artifacts `9041954338` and `9041970503`; package artifact `9042005849`; unsigned APKs; 92 byte-matching runtime entries per ABI |
+| Android Release | [`31327061429`](https://github.com/MatDayProjects/material-android/actions/runs/31327061429) | Runtime artifacts `9041976158` and `9041932186`; debug artifact `9042007420`; release artifact `9042054147`; checksums and bundletool validation |
+
+The downloaded release APK SHA-256 is
+`b3280bba178f737a3bb4b1a18873ce8fb16351a642b4983c50c349f84aeb24ce`; the AAB
+SHA-256 is `c4cc46568ae8764a35ee14e4fe180dcd46499371a47e51d109726245f3b5e16c`.
+Both are structurally unsigned, the APK is aligned and has valid Android metadata,
+`jarsigner` explicitly reports the AAB as unsigned, pinned bundletool 1.18.3 validates
+the AAB, and the downloaded checksums and job-context records match. These workflows do
+not prove installation or guest boot because stock Android refuses unsigned APKs.
+
 ## Suggested articles
 
 - [Native QEMU build lane](../features/native-qemu-build.md)
