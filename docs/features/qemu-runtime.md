@@ -36,6 +36,18 @@ The native source and packaging contract is documented in [Native QEMU build
 lane](native-qemu-build.md). Its allowlisted runtime data directory, when present, is extracted
 into the app-private runtime directory and passed to QEMU with `-L`.
 
+## Application startup and controller ownership
+
+`OpenVmApplication` intentionally performs no QEMU controller construction during Android
+application startup. `QemuRuntimeControllerStore` creates one controller per process only when
+the Activity requests it, and returns that same controller across Activity recreation. This keeps
+the production lifecycle behavior while allowing instrumentation to attach on slow software-only
+emulators before the QEMU stack is resolved.
+
+This boundary does not claim that a guest booted: it only makes controller construction available
+after the application and test process are alive. A real kernel/initrd/raw-image boot, serial
+console, and file transfer still require their own evidence.
+
 ## Command contract
 
 The controller invokes QEMU through `ProcessBuilder`, never through a shell. It uses

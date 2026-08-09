@@ -41,6 +41,9 @@ and runs instrumentation on an API 35 x86_64 emulator. The hosted smoke lane pas
 `/dev/kvm`; this is slower software VM execution, but it exercises the same packaged
 x86_64 Android runtime. The lifecycle bounds every ADB readiness call and preserves
 emulator logcat, package memory, and device-property evidence before teardown.
+The application bootstrap keeps QEMU controller construction deferred until the Activity or
+instrumentation path requests it, because software-only startup can otherwise spend its Android
+startup budget resolving the controller before the test runner attaches.
 
 ## Failure modes
 
@@ -59,6 +62,10 @@ emulator logcat, package memory, and device-property evidence before teardown.
   `-PopenvmRequireNativeRuntime=true` and selects the named native runtime and asset
   classes, so a missing or skipped runtime test fails that job without depending on a
   focused UI root in a `-no-window` emulator.
+- A software-only emulator may boot successfully and still fail instrumentation before any test
+  starts if the target application hits an Android startup ANR. The workflow collects logcat,
+  memory, and device properties in that case; the application bootstrap fix in commit
+  [`2aa0083`](https://github.com/MatDayProjects/material-android/commit/2aa00832bbfab20ee5159a633e5426c6ced5abaf) defers controller construction to avoid that false `0/0` test result.
 - `--version` and `-machine help` prove an executable and its library closure, not an
   Android guest boot. A missing kernel, initrd, raw image, display handshake, or guest
   readiness signal remains a separate failure.

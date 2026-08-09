@@ -1,5 +1,20 @@
 # Handoff
 
+## 2026-08-09 · Software-emulator startup ANR fix
+
+### Current state
+
+- Commit [`2aa0083`](https://github.com/MatDayProjects/material-android/commit/2aa00832bbfab20ee5159a633e5426c6ced5abaf) removes QEMU controller class resolution from `Application` startup and keeps the production controller in a process-level store. `MainActivity` still obtains the same controller lazily, so Activity recreation does not discard the running guest.
+- The diagnostic run [`31312096672`](https://github.com/MatDayProjects/material-android/actions/runs/31312096672) proved the previous failure was an Android startup ANR under software-only x86_64 emulation: the emulator booted in 621.570 seconds, `system_server` reached 92% CPU, `org.openvm.app.debug` reached 64% CPU, and `ActivityManager` killed the target for `failed to complete startup`. The XML reported 0 tests because instrumentation never attached; this was not a native QEMU library crash.
+- Hosted verification run [`31313839977`](https://github.com/MatDayProjects/material-android/actions/runs/31313839977) is running against this commit. The Android guest kernel/initrd/raw-image boot boundary remains unverified.
+
+### Verification in this lane
+
+- Java 17 `testDebugUnitTest assembleDebug` — passed locally.
+- Focused packaged `NativeQemuRuntimeSmokeTest` — passed locally, 2/2, using the x86_64 runtime artifact from run `31312096672` without adding generated binaries to the checkout.
+- `git diff --check` — passed.
+
+
 ## 2026-08-09 · Native runtime dependency packaging fix
 
 ### Current state
