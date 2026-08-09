@@ -125,6 +125,8 @@ jobs:
           test -s native/qemu/runtime/arm64-v8a/libopenvm-qemu-x86_64.so
           test -s native/qemu/runtime/x86_64/libopenvm-qemu-aarch64.so
           test -s native/qemu/runtime/x86_64/libopenvm-qemu-x86_64.so
+          test -s native/qemu/runtime/arm64-v8a/lib/libz.so.1
+          test -s native/qemu/runtime/x86_64/lib/libz.so.1
           test -d native/qemu/runtime/arm64-v8a/share/qemu
           test -d native/qemu/runtime/x86_64/share/qemu
           for abi in arm64-v8a x86_64; do
@@ -149,6 +151,8 @@ jobs:
           unzip -l "$apk" | grep -F 'lib/x86_64/libopenvm-qemu-aarch64.so'
           unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-aarch64.so'
           unzip -l "$apk" | grep -F 'lib/arm64-v8a/libopenvm-qemu-x86_64.so'
+          unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/lib/libz.so.1'
+          unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/lib/libz.so.1'
           unzip -l "$apk" | grep -F 'assets/native-qemu/x86_64/share/qemu/'
           unzip -l "$apk" | grep -F 'assets/native-qemu/arm64-v8a/share/qemu/'
           zipalign -c -P 16 4 "$apk"
@@ -162,7 +166,15 @@ jobs:
           force-avd-creation: true
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
-          script: ./gradlew --no-daemon --no-scan -PopenvmRequireNativeRuntime=true connectedDebugAndroidTest
+          script: |
+            ./gradlew --no-daemon --no-scan \
+              -PopenvmRequireNativeRuntime=true \
+              -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.NativeQemuRuntimeSmokeTest \
+              connectedDebugAndroidTest
+            ./gradlew --no-daemon --no-scan \
+              -PopenvmRequireNativeRuntime=true \
+              -Pandroid.testInstrumentationRunnerArguments.class=org.openvm.app.RuntimeAssetStoreTest \
+              connectedDebugAndroidTest
 
       - name: Upload packaged APK and test evidence
         if: ${{ always() }}

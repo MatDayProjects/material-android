@@ -24,13 +24,16 @@ process is not treated as proof that Android has booted.
 OpenVM copies imported executables, images, and optional boot artifacts from their
 Storage Access Framework URIs into `files/runtime-assets/`. Each copy is bounded,
 SHA-256 hashed, written to a unique temporary sibling, and atomically committed. A
-workflow-built executable is installed by Android in `nativeLibraryDir`; its libraries
-are searched from that same directory so the app does not try to execute a binary
+workflow-built executable is installed by Android in `nativeLibraryDir`. Its versioned
+Termux dependencies are bundled as assets, materialized into
+`files/runtime-assets/native-qemu/{abi}/lib`, checked against an exact private
+filename/SHA-256 marker, and placed first in `LD_LIBRARY_PATH`; Android's native library
+directory follows for platform dependencies. The app never tries to execute a binary
 copied into ordinary app data. The QEMU controller accepts only regular files inside
 the app-private runtime directory or the verified native-library directory.
 
 The native source and packaging contract is documented in [Native QEMU build
-lane](native-qemu-build.md). Its runtime data directory, when present, is extracted
+lane](native-qemu-build.md). Its allowlisted runtime data directory, when present, is extracted
 into the app-private runtime directory and passed to QEMU with `-L`.
 
 ## Command contract
@@ -106,7 +109,8 @@ on that emulator:
 ![OpenVM API 37 runtime backend surface](evidence/qemu-runtime-api37.png)
 
 The source-only debug APK does not ship generated QEMU bytes. The native workflow builds
-and packages the pinned runtime, verifies every host/guest library combination and data
-root, and then exercises the production controller path on an Android emulator.
+and packages the pinned runtime, verifies every host/guest executable combination,
+versioned dependency asset, and data root, and then exercises the production controller
+path on an Android emulator.
 The repository still does not claim serial-console presentation, file-transfer
 transport, or a verified Android guest boot; those remain separate gates.

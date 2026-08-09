@@ -23,14 +23,13 @@ class NativeQemuRuntimeSmokeTest {
     fun bundledRuntimeExecutesVersionAndMachineHelpWhenPackaged() {
         val runtime = requireRuntimeOrSkip()
 
-        val version = runQemu(runtime.executable, runtime.dataDirectory, "--version")
-        assertEquals(0, version.exitCode)
+        val version = runQemu(runtime.executable, runtime.libraryDirectory, runtime.dataDirectory, "--version")
+        assertEquals("QEMU --version failed: ${version.output}", 0, version.exitCode)
         assertTrue(version.output.contains("QEMU emulator version 11.0.3"))
 
-        val machines = runQemu(runtime.executable, runtime.dataDirectory, "-machine", "help")
-        assertEquals(0, machines.exitCode)
-        assertTrue(machines.output.contains("virt"))
-        assertTrue(machines.output.contains("q35"))
+        val machines = runQemu(runtime.executable, runtime.libraryDirectory, runtime.dataDirectory, "-machine", "help")
+        assertEquals("QEMU machine help failed: ${machines.output}", 0, machines.exitCode)
+        assertTrue("x86_64 QEMU machine list omitted q35: ${machines.output}", machines.output.contains("q35"))
     }
 
     @Test
@@ -38,7 +37,7 @@ class NativeQemuRuntimeSmokeTest {
         val runtime = requireRuntimeOrSkip()
         val image = File(context.filesDir, "runtime-assets/native-smoke.img")
         image.parentFile?.mkdirs()
-        image.outputStream().use { output -> output.channel.truncate(1024L * 1024L) }
+        image.outputStream().use { output -> output.write(ByteArray(1024 * 1024)) }
         val profile = VmProfile(
             name = "native controller smoke",
             architecture = "x86_64",
@@ -52,8 +51,9 @@ class NativeQemuRuntimeSmokeTest {
                 executable = runtime.executable,
                 image = image,
                 qemuDataDirectory = runtime.dataDirectory,
+                qemuLibraryDirectory = runtime.libraryDirectory,
             )
-            assertEquals(RuntimeProcessState.RUNNING, started.state)
+            assertEquals("QEMU controller failed: ${started.message}; output=${started.outputTail}", RuntimeProcessState.RUNNING, started.state)
             val stopped = controller.stop(profile.id)
             assertNotEquals(RuntimeProcessState.RUNNING, stopped.state)
         } finally {
@@ -75,7 +75,12 @@ class NativeQemuRuntimeSmokeTest {
         }
     }!!
 
-    private fun runQemu(executable: File, dataDirectory: File?, vararg arguments: String): ProcessResult {
+    private fun runQemu(
+        executable: File,
+        libraryDirectory: File?,
+        dataDirectory: File?,
+        vararg arguments: String,
+    ): ProcessResult {
         val command = buildList {
             add(executable.absolutePath)
             if (dataDirectory != null) addAll(listOf("-L", dataDirectory.absolutePath))
@@ -85,7 +90,10 @@ class NativeQemuRuntimeSmokeTest {
             .directory(context.filesDir)
             .redirectErrorStream(true)
             .apply {
-                environment()["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
+                environment()["LD_LIBRARY_PATH"] = listOf(
+                    libraryDirectory?.absolutePath,
+                    context.applicationInfo.nativeLibraryDir,
+                ).filterNot { it.isNullOrBlank() }.joinToString(File.pathSeparator)
             }
             .start()
         assertTrue("QEMU probe timed out", process.waitFor(20, TimeUnit.SECONDS))

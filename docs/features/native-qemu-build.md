@@ -7,18 +7,21 @@ components. The native lane builds QEMU 11.0.3 for `arm64-v8a` and `x86_64` Andr
 hosts using the pinned Termux Android package recipe, patch series, and immutable
 Termux package-builder image. It
 collects the `aarch64` and `x86_64` system emulators, their transitive shared-library
-closure, an allowlisted set of QEMU data files needed by OpenVM's headless `q35`/`virt`
-command paths, and provenance metadata. Documentation, keymaps, non-target firmware, and
-unused ROMs are omitted; `runtime.json` records the allowlist policy, exact file list,
-file count, and byte count. The generated runtime is passed to the Android Gradle build
-through `OPENVM_QEMU_RUNTIME_DIR`; no binary is stored in Git.
+closure including versioned names such as `libz.so.1`, an allowlisted set of QEMU data
+files needed by OpenVM's headless `q35`/`virt` command paths, and provenance metadata.
+Documentation, keymaps, non-target firmware, and unused ROMs are omitted; `runtime.json`
+records the allowlist policy, exact file list, file count, and byte count. The generated
+runtime is passed to the Android Gradle build through `OPENVM_QEMU_RUNTIME_DIR`; no binary
+is stored in Git.
 
 The packaged executable is named `libopenvm-qemu-{guest}.so` and is installed in
-Android's `nativeLibraryDir`. The app maps the profile's guest architecture to the
-matching executable, sets the child process library path, and extracts optional QEMU
-data to app-private storage. When the generated runtime is absent, the app retains the
-explicit Storage Access Framework import route. This makes a source-only APK honest
-and keeps the native capability visible in the backend readiness state.
+Android's `nativeLibraryDir`. The complete dependency closure is kept as
+`assets/native-qemu/{abi}/lib`, including `.so.*` files that JNI packaging would drop.
+The app materializes those flat assets to app-private storage, checks an exact filename
+and SHA-256 marker, and places that directory first in `LD_LIBRARY_PATH`; QEMU data is
+materialized separately and passed with `-L`. When the generated runtime is absent, the
+app retains the explicit Storage Access Framework import route. This makes a source-only
+APK honest and keeps the native capability visible in the backend readiness state.
 
 ## Configuration
 
@@ -42,14 +45,16 @@ and runs instrumentation on an API 35 x86_64 emulator.
 - A QEMU archive or Termux patch digest mismatch stops before packaging.
 - A missing pinned Termux commit, recipe, builder image digest, or transitive runtime
   library stops the collector; a partial library set is not installable.
-- A generated APK without all four host/guest library combinations or either allowlisted
-  QEMU data root is rejected before the emulator job; the workflow also requires a
+- A generated APK without all four host/guest executable combinations, either versioned
+  dependency asset, or either allowlisted QEMU data root is rejected before the emulator
+  job; the workflow also requires a
   non-empty data count, an exact match with `qemu-build.json`, and a byte count at or
   below 64 MiB. APK zip alignment is checked for 16 KiB.
 - The instrumentation smoke test is skipped only for a source-only APK in ordinary
   local `connectedDebugAndroidTest`; the native workflow passes
-  `-PopenvmRequireNativeRuntime=true`, so a missing or skipped runtime test fails that
-  job.
+  `-PopenvmRequireNativeRuntime=true` and selects the named native runtime and asset
+  classes, so a missing or skipped runtime test fails that job without depending on a
+  focused UI root in a `-no-window` emulator.
 - `--version` and `-machine help` prove an executable and its library closure, not an
   Android guest boot. A missing kernel, initrd, raw image, display handshake, or guest
   readiness signal remains a separate failure.
@@ -63,8 +68,10 @@ never commits a keystore or binary, and uploads only the generated runtime, APK,
 reports, and provenance evidence. The collector rejects libraries outside the pinned
 Termux prefix, validates the Android loader and ELF machine, enforces 16 KiB load
 alignment, uses an explicit QEMU data allowlist, and caps the bundled runtime data at
-64 MiB. The app's local manifest/image integrity gate remains required before a profile
-starts. UEFI and other machine-specific firmware are not claimed by this runtime lane.
+64 MiB. The app's local library marker rejects stale, incomplete, extra, or modified
+dependency files before reuse. The local manifest/image integrity gate remains required
+before a profile starts. UEFI and other machine-specific firmware are not claimed by
+this runtime lane.
 
 ## Verification
 
@@ -77,12 +84,13 @@ native/qemu/build-android.sh --verify-only
 
 The Android control plane remains covered by `testDebugUnitTest`, `assembleDebug`, and
 the API 37 emulator suite. The native workflow adds exact source/patch verification,
-ELF/runtime collection, APK member checks, and the API 35 emulator's QEMU
-`--version`/`-machine help` smoke test. A real guest boot is still unverified until a
-compatible Android guest image and boot readiness contract are exercised.
+ELF/runtime collection, versioned APK member checks, and the API 35 emulator's QEMU
+`--version`/`-machine help` plus production-controller smoke tests. A real guest boot is
+still unverified until a compatible Android guest image and boot readiness contract are
+exercised.
 
 ## Suggested articles
 
 - [QEMU runtime adapter](qemu-runtime.md)
 - [Guest-image manifest](guest-image-manifest.md)
-- [Android build and release signing](../ci/android-build-and-signing.md)
+- [Android build and unsigned release artifacts](../ci/android-build-and-signing.md)

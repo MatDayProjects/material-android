@@ -17,7 +17,7 @@ recorded in the manifest; no QEMU source or binary is copied into this repositor
 The build currently targets `arm64-v8a` and `x86_64` Android hosts, uses Android API 29
 or newer, and records the required 16 KiB page-size assumption. Each host build emits
 the `aarch64` and `x86_64` QEMU system executables, their transitive Termux shared
-library closure, an allowlisted set of QEMU data files needed by OpenVM's headless
+library closure (including exact versioned names such as `libz.so.1`), an allowlisted set of QEMU data files needed by OpenVM's headless
 `q35`/`virt` command paths, and a provenance JSON file. The allowlist deliberately
 omits documentation, keymaps, non-target firmware, and unused ROMs; `runtime.json`
 records the policy, exact file list, file count, and byte count. The output is a build
@@ -40,20 +40,23 @@ file records the container, recipe, patch-manifest, source, API, and page-size h
 
 Generated runtime directories must stay outside Git. The build script creates a unique,
 marker-owned temporary child and never recursively removes a caller-owned work parent;
-the collector refuses to replace an existing output directory. The Android Gradle build accepts
-`OPENVM_QEMU_RUNTIME_DIR` and copies a supplied runtime into generated `jniLibs` and
-assets. A normal debug build without that variable remains source-only and does not
-silently download a runtime.
+the collector refuses to replace an existing output directory. The Android Gradle build
+accepts `OPENVM_QEMU_RUNTIME_DIR`, keeps QEMU root executables in generated `jniLibs`,
+and copies the complete dependency closure into `assets/native-qemu/{abi}/lib`, preserving
+versioned `.so.*` names that JNI packaging would discard. A normal debug build without
+that variable remains source-only and does not silently download a runtime.
 
 ## Android packaging and runtime behavior
 
 QEMU executables are renamed to `libopenvm-qemu-{guest}.so` and are installed by Android
 in `ApplicationInfo.nativeLibraryDir`. This avoids attempting to execute code copied
-into ordinary app data on Android configurations that enforce W^X. The app sets a
-bounded library search path for the child process and extracts the optional QEMU data
-directory into its private `runtime-assets/native-qemu/{abi}` directory. A bundled
-runtime is selected only when its host ABI and guest executable are both available;
-otherwise the existing user-imported executable route remains available.
+into ordinary app data on Android configurations that enforce W^X. The app extracts the
+flat dependency assets into `files/runtime-assets/native-qemu/{abi}/lib`, verifies an
+exact per-file SHA-256 marker before reusing a cache, and places that directory first in
+the child process `LD_LIBRARY_PATH`, followed by Android's native library directory.
+Firmware data is extracted separately into `share/qemu` and passed to QEMU with `-L`.
+A bundled runtime is selected only when its host ABI and guest executable are both
+available; otherwise the existing user-imported executable route remains available.
 
 The bundled native runtime is selected only on Android API 29 or newer and only after
 the host ABI, executable mode, and guest executable are available. The bundle is not a
@@ -72,21 +75,24 @@ does not prove that Android booted; the guest-boot harness remains a separate ga
   segment alignment, a missing allowlisted QEMU data file, or allowlisted QEMU runtime
   data larger than 64 MiB.
 - The app never downloads QEMU, guest images, or libraries at runtime. All packaged
-  bytes are produced by the workflow and checked by the artifact manifest.
+  bytes are produced by the workflow and checked by the artifact manifest; local
+  extraction is flat, bounded, atomic, and revalidated by the private library marker.
 - QEMU and the guest execute with the OpenVM process privileges. Packaging an open
   source binary does not make an untrusted guest image safe.
 
 ## Verification
 
 The native workflow verifies the manifest, source digest, Termux commit, ELF output,
-runtime dependency closure, generated APK contents, QEMU `--version`, and QEMU
-`-machine help` on an Android emulator. It also uploads the runtime, APK, provenance,
-and safe build reports on both successful and failed attempts. A real Android guest
-boot is not claimed until a compatible kernel, initrd, raw image, display, input path,
-and guest readiness signal have all been exercised.
+runtime dependency closure, exact versioned APK library assets, generated APK contents,
+QEMU `--version`, and QEMU `-machine help` on an Android emulator. The headless lane
+filters instrumentation to the native runtime and asset-store classes; the API 37
+local suite separately covers the UI focus surface. The workflow also uploads the
+runtime, APK, provenance, and safe build reports on both successful and failed attempts.
+A real Android guest boot is not claimed until a compatible kernel, initrd, raw image,
+display, input path, and guest readiness signal have all been exercised.
 
 ## Suggested articles
 
 - [QEMU runtime adapter](../../docs/features/qemu-runtime.md)
 - [Guest-image manifest](../../docs/features/guest-image-manifest.md)
-- [Android build and release signing](../../docs/ci/android-build-and-signing.md)
+- [Android build and unsigned release artifacts](../../docs/ci/android-build-and-signing.md)

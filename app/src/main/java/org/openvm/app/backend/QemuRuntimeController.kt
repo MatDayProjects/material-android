@@ -122,6 +122,7 @@ class QemuRuntimeController(
         displaySocket: File? = null,
         bootArtifacts: GuestBootArtifacts? = null,
         qemuDataDirectory: File? = null,
+        qemuLibraryDirectory: File? = null,
         shouldStart: () -> Boolean = { true },
         listener: (RuntimeProcessSnapshot) -> Unit = {},
     ): RuntimeProcessSnapshot {
@@ -144,6 +145,8 @@ class QemuRuntimeController(
             validateElfExecutable(executable)
             validateAsset(image, "Guest image", mustExecute = false)
             validateDirectory(qemuDataDirectory, "QEMU data directory")
+            validateDirectory(qemuLibraryDirectory, "QEMU library directory")
+            validateLibraryDirectory(qemuLibraryDirectory)
             if (bootArtifacts != null) {
                 validateAsset(bootArtifacts.kernel, "Guest kernel", mustExecute = false)
                 validateAsset(bootArtifacts.initrd, "Guest initrd", mustExecute = false)
@@ -168,7 +171,7 @@ class QemuRuntimeController(
             }
             if (existing != null) running.remove(profile.id)
             val process = try {
-                startProcess(command)
+                startProcess(command, qemuLibraryDirectory, qemuDataDirectory)
             } catch (error: Throwable) {
                 return fail(profile.id, error.message ?: "QEMU could not be started", listener)
             }
@@ -292,18 +295,20 @@ class QemuRuntimeController(
         return result
     }
 
-    private fun startProcess(command: List<String>): Process {
+    private fun startProcess(command: List<String>, qemuLibraryDirectory: File?, qemuDataDirectory: File?): Process {
         val starter = processStarter
         if (starter != null) return starter.start(command, trustedRoot)
         return ProcessBuilder(command).apply {
             directory(trustedRoot)
-            runtimeLibraryDirectory?.let { libraryDirectory ->
-                val existing = environment()["LD_LIBRARY_PATH"]
-                environment()["LD_LIBRARY_PATH"] = listOf(
-                    libraryDirectory.absolutePath,
-                    File(trustedRoot, "lib").absolutePath,
-                    existing,
-                ).filterNot { it.isNullOrBlank() }.joinToString(File.pathSeparator)
+            val libraryDirectories = listOf(
+                qemuLibraryDirectory,
+                qemuDataDirectory?.parentFile?.parentFile?.resolve("lib"),
+                runtimeLibraryDirectory,
+            )
+            if (libraryDirectories.any { it != null }) {
+                environment()["LD_LIBRARY_PATH"] = libraryDirectories.map { it?.absolutePath }
+                    .filterNot { it.isNullOrBlank() }
+                    .joinToString(File.pathSeparator)
             }
             redirectErrorStream(true)
         }.start()
@@ -328,6 +333,16 @@ class QemuRuntimeController(
         val canonical = directory.canonicalFile
         require(canonical.isDirectory && (canonical.path == canonicalRoot.path || canonical.path.startsWith(canonicalRoot.path + File.separator))) {
             "$label must be inside the app-private runtime directory"
+        }
+    }
+
+    private fun validateLibraryDirectory(directory: File?) {
+        if (directory == null) return
+        val libraries = directory.listFiles().orEmpty()
+            .filter { it.isFile && it.name.startsWith("lib") }
+        require(libraries.isNotEmpty()) { "QEMU library directory is empty" }
+        libraries.forEach { library ->
+            require(library.length() > 0L && library.canRead()) { "QEMU library is missing or unreadable: ${library.name}" }
         }
     }
 

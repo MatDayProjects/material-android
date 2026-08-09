@@ -8,6 +8,8 @@ Please report suspected vulnerabilities privately to the project maintainers rat
 
 - Guest images are user-selected local data and are not executed by the current control-plane milestone.
 - A future runtime adapter must validate image descriptors, enforce CPU/memory/storage limits, clean up child processes, and fail closed when the backend cannot prove readiness.
-- Release signing material stays in GitHub Actions encrypted secrets. The workflow must not echo it, upload it, or write it into the repository.
+- Release artifacts are intentionally unsigned. Do not submit keystores, certificates,
+  private keys, passwords, or signing secrets in issues, pull requests, or workflow
+  inputs.
 - Configuration exports contain profile metadata and content URIs, not guest image bytes or credentials.
 

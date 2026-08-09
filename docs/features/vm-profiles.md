@@ -40,4 +40,4 @@ Guest images are potentially executable code. The control-plane milestone stores
 ## Suggested articles
 
 - [Search and regex builder](search-and-regex.md)
-- [APK signing](../ci/apk-signing.md)
+- [Unsigned Android artifacts](../ci/android-build-and-signing.md)

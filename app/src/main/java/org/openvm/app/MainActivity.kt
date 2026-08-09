@@ -575,6 +575,7 @@ class MainActivity : AppCompatActivity() {
                     shouldStart = { isCurrentStart() },
                     bootArtifacts = bootArtifacts,
                     qemuDataDirectory = bundledRuntime?.dataDirectory,
+                    qemuLibraryDirectory = bundledRuntime?.libraryDirectory,
                 )
                 withContext(Dispatchers.Main) {
                     if (isCurrentStart() && !listenerApplied.get()) applyRuntimeSnapshot(started)

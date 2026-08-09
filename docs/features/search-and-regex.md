@@ -20,5 +20,5 @@ The builder is exercised by the real UI path; profile model tests cover the pers
 ## Suggested articles
 
 - [VM profiles](vm-profiles.md)
-- [APK signing](../ci/apk-signing.md)
+- [Unsigned Android artifacts](../ci/android-build-and-signing.md)
 

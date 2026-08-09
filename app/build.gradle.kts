@@ -31,7 +31,7 @@ val prepareNativeQemuRuntime by tasks.registering {
                         include("*.so")
                         include("*.so.*")
                     }
-                    into(destination.resolve("jniLibs/${abiDirectory.name}"))
+                    into(destination.resolve("assets/native-qemu/${abiDirectory.name}/lib"))
                 }
                 copy {
                     from(abiDirectory.resolve("share"))
@@ -45,21 +45,6 @@ tasks.named("preBuild") { dependsOn(prepareNativeQemuRuntime) }
 
 android.sourceSets["main"].jniLibs.srcDir(generatedNativeRuntimeRoot.map { it.dir("jniLibs") })
 android.sourceSets["main"].assets.srcDir(generatedNativeRuntimeRoot.map { it.dir("assets") })
-
-val ciReleaseKeystorePath = providers.environmentVariable("OPENVM_RELEASE_KEYSTORE").orNull
-val ciReleaseStorePassword = providers.environmentVariable("OPENVM_RELEASE_STORE_PASSWORD").orNull
-val ciReleaseKeyAlias = providers.environmentVariable("OPENVM_RELEASE_KEY_ALIAS").orNull
-val ciReleaseKeyPassword = providers.environmentVariable("OPENVM_RELEASE_KEY_PASSWORD").orNull
-val ciReleaseSigningValues = listOf(
-    ciReleaseKeystorePath,
-    ciReleaseStorePassword,
-    ciReleaseKeyAlias,
-    ciReleaseKeyPassword,
-)
-val ciReleaseSigningConfigured = ciReleaseSigningValues.all { it != null }
-if (ciReleaseSigningValues.any { it != null } && !ciReleaseSigningConfigured) {
-    error("CI release signing requires OPENVM_RELEASE_KEYSTORE, OPENVM_RELEASE_STORE_PASSWORD, OPENVM_RELEASE_KEY_ALIAS, and OPENVM_RELEASE_KEY_PASSWORD together.")
-}
 
 android {
     namespace = "org.openvm.app"
@@ -78,18 +63,6 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
-    signingConfigs {
-        if (ciReleaseSigningConfigured) {
-            create("ciRelease") {
-                storeFile = file(ciReleaseKeystorePath!!)
-                storePassword = ciReleaseStorePassword
-                keyAlias = ciReleaseKeyAlias
-                keyPassword = ciReleaseKeyPassword
-                storeType = "PKCS12"
-            }
-        }
-    }
-
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -101,9 +74,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (ciReleaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("ciRelease")
-            }
         }
     }
 

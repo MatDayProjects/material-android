@@ -2,14 +2,14 @@
 
 OpenVM is a local-first, open-source Android VM control plane inspired by the isolation and multi-instance workflow of VMOS. It is written from scratch and does not copy VMOS code, assets, branding, or private services.
 
-> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, validates a strict guest-image manifest against the selected profile and image/boot-artifact digests, materializes selected guest assets into app-private storage, can use a workflow-built QEMU runtime from Android's native-library directory or an explicitly imported executable, exposes a private UNIX-socket framebuffer transport with bounded touch/key input, exports configuration, records local history, exposes an honest AVF readiness panel, and ships a reproducible GitHub Actions signing path. The bundled native lane is experimental and has not yet proved an Android guest boot, serial console, or file transfer.
+> **Status:** the repository is a working open-source runtime milestone. It creates and stores VM profiles, validates a strict guest-image manifest against the selected profile and image/boot-artifact digests, materializes selected guest assets into app-private storage, can use a workflow-built QEMU runtime from Android's native-library directory or an explicitly imported executable, exposes a private UNIX-socket framebuffer transport with bounded touch/key input, exports configuration, records local history, exposes an honest AVF readiness panel, and ships reproducible unsigned GitHub Actions APK/AAB artifacts. The bundled native lane is experimental and has not yet proved an Android guest boot, serial console, or file transfer.
 
 ## Contents
 
 - [What is implemented](#what-is-implemented)
 - [Architecture](#architecture)
 - [Build locally](#build-locally)
-- [Release signing](#release-signing)
+- [Unsigned release artifacts](#unsigned-release-artifacts)
 - [Security boundary](#security-boundary)
 - [Project documentation](#project-documentation)
 - [License](#license)
@@ -22,7 +22,7 @@ OpenVM is a local-first, open-source Android VM control plane inspired by the is
 - Local JSON configuration import/export.
 - Local append-only history for profile creation, editing, deletion, import, and export.
 - Multiple profile cards with truthful lifecycle states. QEMU starts only after a bundled or imported executable, manifest, and bootable image are available; AVF remains explicitly unavailable until its platform adapter is verified. There is no fake “running” state.
-- An open native QEMU build lane pinned to QEMU 11.0.3, the exact Termux Android patch revision, immutable Termux builder image, host ABIs, runtime library closure, 16 KiB ELF contract, APK/AAB packaging contract, and required-runtime emulator probes. The lane never commits QEMU source or generated binaries.
+- An open native QEMU build lane pinned to QEMU 11.0.3, the exact Termux Android patch revision, immutable Termux builder image, host ABIs, versioned runtime library closure, 16 KiB ELF contract, APK/AAB packaging contract, and required-runtime emulator probes. The lane never commits QEMU source or generated binaries.
 - A process-backed QEMU adapter with ELF/path checks, bounded image and executable materialization, deterministic TCG command construction, serial output capture, stop timeouts, and explicit exit states.
 - A private UNIX-domain VNC/RFB framebuffer transport attached to running QEMU profiles; it is local-only, renders the guest display, and sends bounded touch/key events without opening a TCP listener. It still makes no boot-readiness claim.
 - Explicit QEMU kernel/initrd argument construction for manifests that select the `kernel-initrd` contract; boot artifacts are size/hash checked, stay app-private, and are never passed through a shell.
@@ -74,11 +74,9 @@ for bundled native execution. Run
 `native/qemu/build-android.sh --verify-only` to validate the checked-in source and
 patch pins without creating a runtime locally.
 
-## Release signing
+## Unsigned release artifacts
 
-Release signing is performed only in GitHub Actions from encrypted repository secrets. No keystore, certificate, or private key belongs in this repository. See [docs/ci/apk-signing.md](docs/ci/apk-signing.md) for the exact one-time secret setup and the workflow's verification steps.
-
-The signing workflow builds the release APK/AAB outputs, signs them only inside the protected GitHub Actions environment, validates the APK with the Android SDK's `apksigner`, validates the AAB with `jarsigner`, and uploads safe workflow artifacts. It does not print secret values. A certificate is not “generated” by CI on every run: the signing identity is created once by the project owner, stored in the GitHub Actions secret store, and used reproducibly.
+OpenVM intentionally does not generate, store, or use a code-signing certificate. GitHub Actions builds reproducible unsigned release APK/AAB artifacts, checks their QEMU contents and alignment, rejects signing metadata, and publishes checksums. Unsigned APKs may trigger an Android unknown-publisher warning. See [Android build and unsigned release artifacts](docs/ci/android-build-and-signing.md).
 
 ## Security boundary
 
@@ -91,7 +89,7 @@ and explicit process errors; its VNC framebuffer transport uses a private UNIX-d
 socket and never opens a TCP listener. It does not grant the guest additional Android
 permissions.
 
-Do not open issues or pull requests containing private keystores, passwords, access tokens, or guest images. Report security issues through the process in [SECURITY.md](SECURITY.md).
+Do not open issues or pull requests containing passwords, access tokens, private build inputs, or guest images. Report security issues through the process in [SECURITY.md](SECURITY.md).
 
 ## Project documentation
 
@@ -100,7 +98,7 @@ Do not open issues or pull requests containing private keystores, passwords, acc
 - [QEMU runtime adapter](docs/features/qemu-runtime.md)
 - [Native QEMU build lane](docs/features/native-qemu-build.md)
 - [Search and regex builder](docs/features/search-and-regex.md)
-- [APK signing](docs/ci/apk-signing.md)
+- [Unsigned Android artifacts](docs/ci/android-build-and-signing.md)
 - [Roadmap](ROADMAP.md)
 - [Handoff](HANDOFF.md)
 

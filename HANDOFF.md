@@ -1,5 +1,37 @@
 # Handoff
 
+## 2026-08-09 · Native runtime dependency packaging fix
+
+### Current state
+
+- QEMU root executables remain Android JNI libraries; the complete Termux dependency
+  closure, including versioned files such as `libz.so.1`, is packaged under
+  `assets/native-qemu/{abi}/lib` so Android does not drop `.so.*` names.
+- `NativeQemuRuntime` materializes the flat asset set into app-private storage, records
+  and validates an exact filename/SHA-256 marker, and rebuilds stale or incomplete
+  caches atomically. `QemuRuntimeController` passes that ABI-specific directory first
+  in `LD_LIBRARY_PATH`, followed by Android's native library directory, without
+  inheriting an ambient library path.
+- The native workflow's API 35 headless job selects the native runtime and asset-store
+  instrumentation classes explicitly. UI focus tests remain in the API 37 local/control
+  plane suite rather than being mixed into the process-level native gate.
+- Android release artifacts are intentionally unsigned. No certificate, keystore,
+  private key, or signing secret is generated or used by this task or the workflow.
+
+### Verification in this lane
+
+- `testDebugUnitTest assembleDebug assembleDebugAndroidTest` — passed with JDK 21.
+- `connectedDebugAndroidTest` — passed on `Pixel_10_Pro_XL` API 37; 6/6 tests.
+- The exact native class-filtered Gradle invocation — passed; 2/2 native tests.
+- `RuntimeAssetStoreTest` through the exact class-filtered invocation — passed; 2/2.
+- APK inspection confirmed both ABI asset trees contain `libz.so.1` and
+  `libz.so.1.3.2`.
+- Hosted run `31300520137` at `88159ed` is red because it predates this fix: the APK
+  omitted versioned libraries and the same headless run mixed unrelated root-focus UI
+  tests. A new hosted run is required before the native lane is remotely verified.
+- Android guest boot, serial console, and file transfer remain unverified.
+
+
 ## 2026-08-09 · Native QEMU build and packaging lane
 
 ### Completed in this lane
@@ -48,7 +80,7 @@ loader/ABI behavior, and only then prepare a documented bootable Android guest i
 for the separate guest-boot harness. Do not interpret QEMU probes or a running process
 as Android guest readiness.
 
-## 2026-08-09 · OpenVM bootstrap and protected signing
+## 2026-08-09 · OpenVM bootstrap and unsigned Android artifacts
 
 ### Completed
 
@@ -75,14 +107,14 @@ as Android guest readiness.
   resurrecting; RFB input rejects letterbox clicks, forwards modifier keys, and
   bounds update pixels; failed display connections unregister themselves.
 - Added localizable language mode, independent funny levels, emoji toggle, display name, dark theme, regex search builder, and `Ctrl+Shift+F` command palette.
-- Added unit and instrumentation test coverage plus a protected GitHub Actions workflow
-  that signs and verifies release APK/AAB artifacts from an encrypted environment.
+- Added unit and instrumentation test coverage plus a GitHub Actions workflow that builds
+  and verifies reproducible unsigned release APK/AAB artifacts without signing inputs.
 
 ### Verification boundary
 
 The host toolchain was installed in an isolated user-scoped directory outside the repository. Verified locally with JDK 21, Android SDK platform 35, and Gradle wrapper 8.10.2:
 
-- `./gradlew --no-daemon --no-scan testDebugUnitTest assembleRelease bundleRelease` with JDK 21 — passed; ordinary local release outputs remain unsigned unless the protected signing environment is explicitly supplied.
+- `./gradlew --no-daemon --no-scan testDebugUnitTest assembleRelease bundleRelease` with JDK 21 — passed; release outputs remain unsigned by design.
 - `./gradlew --no-daemon --no-scan testDebugUnitTest lintDebug assembleDebugAndroidTest` with JDK 21 — passed.
 - `./gradlew --no-daemon --no-scan connectedDebugAndroidTest` — passed on the installed `Pixel_10_Pro_XL` API 37 emulator: 4 instrumentation tests passed.
 - `./gradlew --no-daemon --no-scan testDebugUnitTest` — passed after the RFB, collision,
@@ -95,20 +127,11 @@ The host toolchain was installed in an isolated user-scoped directory outside th
 - `actionlint -shellcheck=` — passed structural workflow validation. The host does not have `shellcheck`, so the run-block shell content was not covered by that local actionlint invocation; hosted CI remains the shell verification gate.
 - `apksigner verify --verbose --print-certs` — passed for the debug APK.
 
-## Hosted signing evidence
+## Artifact policy
 
-The pushed commit [`1c2a439`](https://github.com/MatDayProjects/material-android/commit/1c2a43979bc8324529e71d28ec8ec44d3f85f6cb) was verified by [GitHub Actions run 31290128594](https://github.com/MatDayProjects/material-android/actions/runs/31290128594).
-
-- Debug validation passed.
-- The protected release job passed Gradle signing for both `app-release.apk` and
-  `app-release.aab`.
-- The uploaded evidence contains `verification.txt`, `SHA256SUMS.txt`, the signed APK,
-  and the signed AAB.
-- APK SHA-256: `4b42a529d3a632a913a3402664235d9d20af943ba0acff722ad6e863280cd8a8`.
-- AAB SHA-256: `548f4d28893b90ca1e52380d688ab61c14becb45c923d0fcc17e11d0df632398`.
-- Public signing certificate SHA-256: `0dbe4aecd0c1911f6b8cb5a736efe3823ed2753cfa193464b40bf5a1f25b7428`.
-- The private keystore and passwords remain only in the protected GitHub Actions
-  environment and are not stored in this repository.
+The current release workflow builds unsigned APK/AAB artifacts and publishes checksums;
+it does not create or use a signing identity. Earlier historical automation may have
+produced signed artifacts, but that path is no longer active and must not be restored.
 
 ### Next owner
 
