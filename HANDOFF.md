@@ -26,9 +26,10 @@
 - `RuntimeAssetStoreTest` through the exact class-filtered invocation — passed; 2/2.
 - APK inspection confirmed both ABI asset trees contain `libz.so.1` and
   `libz.so.1.3.2`.
-- Hosted run `31300520137` at `88159ed` is red because it predates this fix: the APK
-  omitted versioned libraries and the same headless run mixed unrelated root-focus UI
-  tests. A new hosted run is required before the native lane is remotely verified.
+- Hosted run `31305007119` is green at `61e33cb`: both ABI collectors, retry-safe
+  artifact handoff, APK packaging, API 35 emulator boot, and the focused native plus
+  asset-store instrumentation classes passed 2/2 each. The earlier `31304067368`
+  failure was a workflow command-quoting issue and is superseded by this run.
 - Android guest boot, serial console, and file transfer remain unverified.
 
 
@@ -70,15 +71,15 @@
 - `native/qemu/build-android.sh --verify-only` — passed locally; the JSON, immutable
   builder-image, Android packaging contract, patch count, path safety, and duplicate
   checks all validated.
-- The hosted native build and Android-target QEMU smoke test have not run yet. A real
-  Android guest boot is still unverified.
+- Hosted run `31305007119` verified the native build and Android-target QEMU smoke test;
+  a real Android guest boot is still unverified.
 
 ### Next owner
 
-Review the first hosted native workflow run, inspect the built runtime's actual dynamic
-loader/ABI behavior, and only then prepare a documented bootable Android guest image
-for the separate guest-boot harness. Do not interpret QEMU probes or a running process
-as Android guest readiness.
+The hosted native workflow is green. Keep the artifact and test evidence linked to the
+handoff, then prepare a documented bootable Android guest image for the separate
+guest-boot harness. Do not interpret QEMU probes or a running process as Android guest
+readiness.
 
 ## 2026-08-09 · OpenVM bootstrap and unsigned Android artifacts
 
