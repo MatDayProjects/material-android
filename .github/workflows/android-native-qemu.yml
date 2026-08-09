@@ -177,6 +177,9 @@ jobs:
           emulator_pid=""
           cleanup() {
             set +e
+            timeout --signal=TERM 30s adb -s emulator-5554 logcat -d -t 2000 -v threadtime > app/build/outputs/logs/logcat.txt 2>&1 || true
+            timeout --signal=TERM 30s adb -s emulator-5554 shell dumpsys meminfo org.openvm.app.debug > app/build/outputs/logs/meminfo.txt 2>&1 || true
+            timeout --signal=TERM 30s adb -s emulator-5554 shell getprop > app/build/outputs/logs/device-properties.txt 2>&1 || true
             adb -s emulator-5554 emu kill >/dev/null 2>&1 || true
             if [[ -n "$emulator_pid" ]]; then
               kill "$emulator_pid" >/dev/null 2>&1 || true
@@ -191,12 +194,12 @@ jobs:
           # this lane exercises the packaged x86_64 runtime, but force the
           # emulator's documented software VM path when hardware acceleration is
           # unavailable.
-          emulator -avd "$avd_name" -no-accel -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -port 5554 >"$emulator_log" 2>&1 &
+          emulator -avd "$avd_name" -no-accel -memory 4096 -cores 4 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -port 5554 >"$emulator_log" 2>&1 &
           emulator_pid=$!
           adb start-server
           booted=0
           for attempt in $(seq 1 600); do
-            if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -qx '1'; then
+            if timeout --signal=TERM 15s adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -qx '1'; then
               booted=1
               break
             fi
@@ -213,7 +216,7 @@ jobs:
           fi
           package_ready=0
           for attempt in $(seq 1 60); do
-            if adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
+            if timeout --signal=TERM 15s adb -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
               package_ready=1
               break
             fi

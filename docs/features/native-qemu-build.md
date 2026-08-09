@@ -39,7 +39,8 @@ Run the workflow `.github/workflows/android-native-qemu.yml` on a push or with
 and runs instrumentation on an API 35 x86_64 emulator. The hosted smoke lane passes
 `-no-accel` so it remains usable on GitHub-hosted Linux machines that do not expose
 `/dev/kvm`; this is slower software VM execution, but it exercises the same packaged
-x86_64 Android runtime.
+x86_64 Android runtime. The lifecycle bounds every ADB readiness call and preserves
+emulator logcat, package memory, and device-property evidence before teardown.
 
 ## Failure modes
 
