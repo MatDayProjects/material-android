@@ -1,5 +1,71 @@
 # Handoff
 
+## 2026-08-09 · Stopped guest-boot checkpoint
+
+### Current state
+
+- Work stopped at the user's request on branch `codex/device-guest-boot-smoke`. This
+  is a deliberately incomplete checkpoint and must not be described as a full Android
+  guest boot or a release candidate.
+- The installed Android Emulator 37.1.11/API 37.1 x86_64 outer device booted with
+  16 KiB pages. Both QEMU 11.0.3 executables from native workflow run `31328380209`
+  reported their versions and remained alive through a bounded event-loop probe when
+  transferred directly with `adb`; this shell-UID route does not prove app-UID wiring.
+- A direct-kernel diagnostic reached Linux
+  `6.12.69-android16-6`, `/init`, and Android first-stage init before the intentionally
+  empty raw disk failed to provide `metadata`, `super`, and `vbmeta`. The 29,065-byte
+  serial log is private machine-local evidence, not a redistributable guest image or a
+  committed artifact.
+- That diagnostic found two concrete runtime defects. The current checkpoint adds
+  `linuxboot_dma.bin` to the manifest-owned QEMU data allowlist and makes generated
+  commands pass `-nic none`, because networking is not implemented and the implicit
+  e1000e device otherwise requires an unbundled option ROM.
+- `scripts/smoke-native-qemu-on-emulator.ps1` is a new repeatable, bounded device
+  harness for runtime-manifest validation, on-device `--version`, event-loop liveness,
+  and optional kernel/init/first-stage serial evidence. It validates and cleans a
+  unique `/data/local/tmp/openvm-smoke-*` directory, but has only passed PowerShell
+  parsing in this checkpoint; it has not yet run against a newly rebuilt runtime.
+- The repository remains permanently unsigned. No certificate, keystore, private key,
+  signing password, or signing service was requested, generated, stored, or used.
+
+### Verification completed before stop
+
+- `py -3 -m unittest discover -s scripts/tests -p 'test_*.py' -q` — 19 tests passed,
+  including two new native-runtime contract checks.
+- PowerShell parsed `scripts/smoke-native-qemu-on-emulator.ps1` successfully with
+  `[scriptblock]::Create` under terminating-error behavior.
+- `git diff --check` passed before this handoff section was added.
+- Gradle unit/build tasks, the normalized Bash syntax check, the new device harness,
+  and a newly collected native runtime were not rerun after these edits. Their status
+  is unverified, not assumed green.
+
+### Known blockers for the next owner
+
+1. Rebuild both host-ABI native runtimes and prove `runtime.json` contains exactly one
+   `linuxboot_dma.bin`; then run the committed device harness against the rebuilt
+   x86_64 artifact and retain its summary and serial evidence.
+2. Fix the RFB 3.8 security selection so the client writes one `U8` byte rather than
+   a four-byte integer, and add a full outbound-handshake regression test plus a real
+   QEMU UNIX-socket handshake/frame test.
+3. Give ARM64 `virt` an explicit 64-bit CPU and a declared display/boot contract;
+   reject ARM disk-only profiles while no ARM firmware path exists.
+4. Separate process liveness, guest booting, and guest readiness. A live QEMU process
+   with a zero-filled disk must never become an Android-ready profile.
+5. Extend the guest manifest to describe machine/CPU, boot method, partition/root
+   topology, required devices, Android compatibility, readiness marker and timeout,
+   and transfer-protocol version. Host-to-guest transfer remains unimplemented.
+
+### 粵語交接摘要
+
+- 呢個 checkpoint 係應要求即時停低，唔係扮完成。外層 emulator 真係跑到兩個
+  QEMU engine，x86_64 Android kernel 亦真係去到 first-stage `init`；但空 disk
+  冇 `metadata`、`super`、`vbmeta`，所以未係完整 Android userspace。
+- 今次先收好兩個現場捉到嘅問題：補 `linuxboot_dma.bin`，同埋 networking 未有
+  之前明確用 `-nic none`，免得 QEMU 自己請咗張 e1000e 枱仲追住要 ROM。
+- 19 個 Python tests 同 PowerShell parse 已過；新 runtime、Gradle、device harness
+  同完整 guest readiness 仲未重跑。下一手請逐樣驗，唔好將「process 仲生存」
+  當成「Android 已經開機」，否則盞綠燈會比架車更早到終點。
+
 ## 2026-08-09 · Explicit unsigned debug enforcement
 
 ### Current state

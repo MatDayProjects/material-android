@@ -63,6 +63,7 @@ class QemuCommandBuilder {
             "-m", "${profile.memoryMb}M",
             "-smp", profile.vcpus.toString(),
             "-drive", "file=${image.absolutePath},format=raw,if=virtio",
+            "-nic", "none",
             "-display", "none",
             "-serial", "stdio",
             "-monitor", "none",

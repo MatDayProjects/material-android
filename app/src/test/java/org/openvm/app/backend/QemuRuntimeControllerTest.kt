@@ -21,7 +21,7 @@ class QemuRuntimeControllerTest {
         assertEquals(executable.absolutePath, command[0])
         assertTrue(command.containsAll(listOf("-machine", "q35,accel=tcg", "-m", "1024M", "-smp", "4")))
         assertTrue(command.contains("file=${image.absolutePath},format=raw,if=virtio"))
-        assertTrue(command.containsAll(listOf("-display", "none", "-monitor", "none", "-no-reboot")))
+        assertTrue(command.containsAll(listOf("-nic", "none", "-display", "none", "-monitor", "none", "-no-reboot")))
     }
 
     @Test

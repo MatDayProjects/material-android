@@ -63,11 +63,18 @@ mapfile -t qemu_data_files < <(jq -r '.packaging.qemuDataFiles[]' "$MANIFEST")
 [[ "$packaging_executable_directory" == nativeLibraryDir ]] || { echo "Native QEMU executables must be packaged in nativeLibraryDir" >&2; exit 1; }
 [[ "$packaging_library_search_path" == nativeLibraryDir ]] || { echo "Native QEMU libraries must resolve from nativeLibraryDir" >&2; exit 1; }
 (( ${#qemu_data_files[@]} > 0 )) || { echo "The native QEMU manifest must allowlist at least one runtime data file" >&2; exit 1; }
+declare -A manifest_qemu_data_files=()
 for index in "${!qemu_data_files[@]}"; do
   qemu_data_files[index]="${qemu_data_files[index]//$'\r'/}"
   qemu_data_file="${qemu_data_files[$index]}"
   [[ "$qemu_data_file" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Unsafe QEMU runtime data file name: $qemu_data_file" >&2; exit 1; }
+  [[ -z "${manifest_qemu_data_files[$qemu_data_file]:-}" ]] || { echo "Duplicate QEMU runtime data file: $qemu_data_file" >&2; exit 1; }
+  manifest_qemu_data_files["$qemu_data_file"]=1
 done
+[[ -n "${manifest_qemu_data_files[linuxboot_dma.bin]:-}" ]] || {
+  echo "The QEMU data allowlist must include linuxboot_dma.bin for q35 direct-kernel boot" >&2
+  exit 1
+}
 patch_count="$(jq '.termuxPackages.patches | length' "$MANIFEST")"
 (( patch_count == 20 )) || { echo "Expected 20 pinned Termux QEMU patches, found $patch_count" >&2; exit 1; }
 declare -A manifest_patch_paths=()
