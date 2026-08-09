@@ -97,6 +97,18 @@ jobs:
         with:
           packages: platform-tools platforms;android-35 build-tools;35.0.0
 
+      - name: Put Android build-tools on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          [[ -n "$sdk_root" ]] || { echo "Android SDK root was not provided by setup-android." >&2; exit 1; }
+          build_tools="$sdk_root/build-tools/35.0.0"
+          [[ -x "$build_tools/zipalign" ]] || { echo "zipalign is missing from $build_tools" >&2; exit 1; }
+          export PATH="$build_tools:$PATH"
+          command -v zipalign
+          echo "$build_tools" >> "$GITHUB_PATH"
+
       - name: Download both native runtime ABIs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
