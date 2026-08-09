@@ -122,8 +122,9 @@ actual_termux_revision="$(git -C "$termux_dir" rev-parse HEAD)"
 recipe_sha256="$(sha256sum "$termux_dir/$termux_recipe" | awk '{print $1}')"
 manifest_patch_list="$work_root/manifest-patches.txt"
 termux_patch_list="$work_root/termux-patches.txt"
+termux_patch_dir="${termux_recipe%/build.sh}"
 jq -r '.termuxPackages.patches[] | [.path, .sha256] | @tsv' "$MANIFEST" | tr -d '\r' | sort > "$manifest_patch_list"
-git -C "$termux_dir" ls-tree -r --name-only HEAD -- 'packages/qemu-system-x86-64-headless/*.patch' | sort > "$termux_patch_list"
+git -C "$termux_dir" ls-tree -r --name-only HEAD -- "$termux_patch_dir" | grep -E '\.patch$' | sort > "$termux_patch_list"
 cut -f1 "$manifest_patch_list" | diff -u "$termux_patch_list" - || {
   echo "The pinned Termux patch manifest does not equal the complete patch set in the pinned revision" >&2
   exit 1
