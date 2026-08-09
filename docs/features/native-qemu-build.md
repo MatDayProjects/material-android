@@ -7,8 +7,11 @@ components. The native lane builds QEMU 11.0.3 for `arm64-v8a` and `x86_64` Andr
 hosts using the pinned Termux Android package recipe, patch series, and immutable
 Termux package-builder image. It
 collects the `aarch64` and `x86_64` system emulators, their transitive shared-library
-closure, QEMU data files, and provenance metadata. The generated runtime is passed to
-the Android Gradle build through `OPENVM_QEMU_RUNTIME_DIR`; no binary is stored in Git.
+closure, the runtime portion of QEMU's data tree, and provenance metadata. Documentation,
+keymaps, and man pages are excluded from the bundled data tree; `runtime.json` records
+the excluded directories, file count, and filtered byte count. The generated runtime is
+passed to the Android Gradle build through `OPENVM_QEMU_RUNTIME_DIR`; no binary is stored
+in Git.
 
 The packaged executable is named `libopenvm-qemu-{guest}.so` and is installed in
 Android's `nativeLibraryDir`. The app maps the profile's guest architecture to the
@@ -39,8 +42,10 @@ and runs instrumentation on an API 35 x86_64 emulator.
 - A QEMU archive or Termux patch digest mismatch stops before packaging.
 - A missing pinned Termux commit, recipe, builder image digest, or transitive runtime
   library stops the collector; a partial library set is not installable.
-- A generated APK without all four host/guest library combinations or either QEMU data
-  root is rejected before the emulator job; APK zip alignment is checked for 16 KiB.
+- A generated APK without all four host/guest library combinations or either filtered
+  QEMU data root is rejected before the emulator job; the workflow also requires a
+  non-empty data count, the documented excluded-directory list, and a byte count at or
+  below 64 MiB. APK zip alignment is checked for 16 KiB.
 - The instrumentation smoke test is skipped only for a source-only APK in ordinary
   local `connectedDebugAndroidTest`; the native workflow passes
   `-PopenvmRequireNativeRuntime=true`, so a missing or skipped runtime test fails that
@@ -57,8 +62,9 @@ guest sandbox. The workflow never accepts a runtime from a mutable app download,
 never commits a keystore or binary, and uploads only the generated runtime, APK, test
 reports, and provenance evidence. The collector rejects libraries outside the pinned
 Termux prefix, validates the Android loader and ELF machine, enforces 16 KiB load
-alignment, and caps bundled QEMU data at 64 MiB. The app's local manifest/image
-integrity gate remains required before a profile starts.
+alignment, excludes documentation-only QEMU data trees, and caps the remaining bundled
+runtime data at 64 MiB. The app's local manifest/image integrity gate remains required
+before a profile starts.
 
 ## Verification
 

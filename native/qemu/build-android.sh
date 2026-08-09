@@ -158,8 +158,10 @@ echo "Using Termux builder image: $builder_digest"
 mkdir -p "$prefix_dir"
 docker cp "$container_name:/data/data/com.termux/files/usr/." "$prefix_dir/"
 bash "$ROOT_DIR/native/qemu/collect-runtime.sh" "$host_abi" "$prefix_dir" "$output_dir" "$required_guest_page_size"
-printf '{\n  "schemaVersion": 1,\n  "builderImage": "%s",\n  "termuxRevision": "%s",\n  "termuxRecipe": "%s",\n  "termuxRecipeSha256": "%s",\n  "termuxPatchManifestSha256": "%s",\n  "qemuVersion": "%s",\n  "qemuSourceSha256": "%s",\n  "requiredNativeApi": %s,\n  "requiredPageSizeBytes": %s\n}\n' \
+qemu_data_bytes="$(jq -r '.qemuDataBytes' "$output_dir/runtime.json")"
+[[ "$qemu_data_bytes" =~ ^[0-9]+$ ]] || { echo "Collected QEMU data byte count is not numeric" >&2; exit 1; }
+printf '{\n  "schemaVersion": 1,\n  "builderImage": "%s",\n  "termuxRevision": "%s",\n  "termuxRecipe": "%s",\n  "termuxRecipeSha256": "%s",\n  "termuxPatchManifestSha256": "%s",\n  "qemuVersion": "%s",\n  "qemuSourceSha256": "%s",\n  "requiredNativeApi": %s,\n  "requiredPageSizeBytes": %s,\n  "qemuDataBytes": %s\n}\n' \
   "$builder_digest" "$actual_termux_revision" "$termux_recipe" "$recipe_sha256" "$patch_manifest_sha256" \
-  "$qemu_version" "$source_sha256" "$minimum_native_api" "$required_guest_page_size" \
+  "$qemu_version" "$source_sha256" "$minimum_native_api" "$required_guest_page_size" "$qemu_data_bytes" \
   > "$output_dir/build-provenance.json"
 echo "Android QEMU runtime build completed: $output_dir"

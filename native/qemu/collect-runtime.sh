@@ -141,9 +141,26 @@ while ((${#queue[@]})); do
 done
 
 [[ -d "$prefix/share/qemu" ]] || { echo "QEMU data directory is missing from the Termux runtime prefix" >&2; exit 1; }
-data_size="$(du -sb "$prefix/share/qemu" | awk '{print $1}')"
-(( data_size <= 67108864 )) || { echo "QEMU data directory exceeds 64 MiB" >&2; exit 1; }
-cp -a -- "$prefix/share/qemu" "$output/share/"
+qemu_data_source="$prefix/share/qemu"
+qemu_data_output="$output/share/qemu"
+qemu_data_file_count=0
+mkdir -p "$qemu_data_output"
+while IFS= read -r -d '' data_file; do
+  relative_path="${data_file#"$qemu_data_source/"}"
+  destination="$qemu_data_output/$relative_path"
+  mkdir -p "$(dirname "$destination")"
+  cp -a -- "$data_file" "$destination"
+  qemu_data_file_count=$((qemu_data_file_count + 1))
+done < <(
+  find "$qemu_data_source" -type f \
+    ! -path "$qemu_data_source/docs/*" \
+    ! -path "$qemu_data_source/keymaps/*" \
+    ! -path "$qemu_data_source/man/*" \
+    -print0
+)
+(( qemu_data_file_count > 0 )) || { echo "QEMU data directory has no runtime files after excluding documentation, keymaps, and man pages" >&2; exit 1; }
+data_size="$(du -sb "$qemu_data_output" | awk '{print $1}')"
+(( data_size <= 67108864 )) || { echo "QEMU runtime data exceeds 64 MiB after excluding documentation, keymaps, and man pages" >&2; exit 1; }
 
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 
@@ -157,8 +174,10 @@ sha256_file() { sha256sum "$1" | awk '{print $1}'; }
     printf '    "%s": {"path": "libopenvm-qemu-%s.so", "sizeBytes": %s, "sha256": "%s"}%s\n' \
       "$guest" "$guest" "$(stat -c '%s' "$file")" "$(sha256_file "$file")" "$comma"
   done
-  printf '  },\n  "libraryCount": %s,\n  "hasQemuDataDirectory": %s\n}\n' \
+  printf '  },\n  "libraryCount": %s,\n  "qemuDataFileCount": %s,\n  "qemuDataBytes": %s,\n  "hasQemuDataDirectory": %s,\n  "excludedDataDirectories": ["docs", "keymaps", "man"]\n}\n' \
     "$(find "$output/lib" -maxdepth 1 -type f -name '*.so*' ! -name 'libopenvm-qemu-*.so' | wc -l)" \
+    "$qemu_data_file_count" \
+    "$data_size" \
     "$([[ -d "$output/share/qemu" ]] && echo true || echo false)"
 } > "$output/runtime.json"
 

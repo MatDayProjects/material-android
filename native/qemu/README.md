@@ -17,8 +17,10 @@ recorded in the manifest; no QEMU source or binary is copied into this repositor
 The build currently targets `arm64-v8a` and `x86_64` Android hosts, uses Android API 29
 or newer, and records the required 16 KiB page-size assumption. Each host build emits
 the `aarch64` and `x86_64` QEMU system executables, their transitive Termux shared
-library closure, QEMU data files when present, and a provenance JSON file. The output
-is a build artifact, not tracked source.
+library closure, the runtime portion of QEMU's data tree, and a provenance JSON file.
+Documentation, keymaps, and man pages are excluded from the bundled data tree; the
+runtime manifest records the excluded directories, file count, and filtered byte count.
+The output is a build artifact, not tracked source.
 
 ## Build
 
@@ -66,7 +68,8 @@ does not prove that Android booted; the guest-boot harness remains a separate ga
   the build; no partial runtime is treated as installable.
 - The collector refuses libraries outside the Termux prefix, missing transitive
   dependencies, output-root replacement, wrong Android interpreter, wrong ABI, invalid
-  segment alignment, and QEMU data larger than 64 MiB.
+  segment alignment, no runtime data after excluding documentation-only trees, or
+  filtered QEMU runtime data larger than 64 MiB.
 - The app never downloads QEMU, guest images, or libraries at runtime. All packaged
   bytes are produced by the workflow and checked by the artifact manifest.
 - QEMU and the guest execute with the OpenVM process privileges. Packaging an open
