@@ -66,6 +66,11 @@ because the device API level is new enough.
 - `MainActivitySmokeTest` runs on the same emulator and verifies the profile editor
   exposes backend selection and QEMU executable import.
 
+The tested empty-state and backend surface is captured from the installed debug APK
+on that emulator:
+
+![OpenVM API 37 runtime backend surface](evidence/qemu-runtime-api37.png)
+
 The repository does not yet ship a QEMU binary or claim a verified Android guest boot.
 The next runtime milestone must build and package a reproducible QEMU target, define
 an Android guest image manifest, and add a real display/console transport before
