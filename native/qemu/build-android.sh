@@ -123,6 +123,7 @@ recipe_sha256="$(sha256sum "$termux_dir/$termux_recipe" | awk '{print $1}')"
 manifest_patch_list="$work_root/manifest-patches.txt"
 termux_patch_list="$work_root/termux-patches.txt"
 termux_patch_dir="${termux_recipe%/build.sh}"
+termux_recipe_dir="$termux_patch_dir"
 jq -r '.termuxPackages.patches[] | [.path, .sha256] | @tsv' "$MANIFEST" | tr -d '\r' | sort > "$manifest_patch_list"
 git -C "$termux_dir" ls-tree -r --name-only HEAD -- "$termux_patch_dir" | grep -E '\.patch$' | sort > "$termux_patch_list"
 cut -f1 "$manifest_patch_list" | diff -u "$termux_patch_list" - || {
@@ -148,7 +149,7 @@ echo "Using Termux builder image: $builder_digest"
   TERMUX_BUILDER_IMAGE_NAME="$builder_image" \
   CONTAINER_NAME="$container_name" \
   TERMUX_DOCKER_RUN_EXTRA_ARGS="--env TERMUX_APP__PACKAGE_NAME=com.termux" \
-    ./scripts/run-docker.sh bash -lc "./build-package.sh -I -C -a '$termux_arch' '$termux_recipe'"
+    ./scripts/run-docker.sh bash -lc "./build-package.sh -I -C -a '$termux_arch' '$termux_recipe_dir'"
 )
 
 mkdir -p "$prefix_dir"
